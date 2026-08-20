@@ -23,11 +23,8 @@ import sys
 import threading
 import time
 import uuid
-from collections import defaultdict
-from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ultron import __version__
 # Re-exported for backwards compatibility with the single-file module.
@@ -41,6 +38,7 @@ from ultron.config import (  # noqa: F401
     load_settings,
 )
 from ultron.budget import BudgetGovernor  # noqa: F401
+from ultron.events import EVENT_BUS, Event, EventBus, EventType  # noqa: F401
 from ultron.fsm import (  # noqa: F401
     AgentState,
     FiniteStateMachine,
@@ -436,108 +434,6 @@ class VectorMemory:
         """Get lessons relevant to the current situation."""
         state_summary = json.dumps(current_state, default=str)[:500]
         return self.query_similar(state_summary, top_k=limit)
-
-
-# ============================================================
-# SECTION 1: EVENT BUS
-# ============================================================
-
-
-class EventType(Enum):
-    AGENT_STARTED = "agent_started"
-    AGENT_COMPLETED = "agent_completed"
-    VULNERABILITY_FOUND = "vulnerability_found"
-    SERVICE_DISCOVERED = "service_discovered"
-    EXPLOIT_SUCCEEDED = "exploit_succeeded"
-    EXPLOIT_FAILED = "exploit_failed"
-    LATERAL_TARGET_FOUND = "lateral_target_found"
-    FLAG_CAPTURED = "flag_captured"
-    STATE_CHANGED = "state_changed"
-    BUDGET_WARNING = "budget_warning"
-    ERROR_OCCURRED = "error_occurred"
-    DEBATE_COMPLETED = "debate_completed"
-
-
-@dataclass
-class Event:
-    event_id: str
-    event_type: EventType
-    timestamp: float
-    source: str
-    payload: Dict[str, Any]
-    correlation_id: str = ""
-
-
-class EventBus:
-    """In-process event bus for decoupled agent communication.
-
-    Can be extended to use Redis/RabbitMQ for distributed systems.
-    """
-
-    def __init__(self) -> None:
-        self.subscribers: Dict[EventType, List[Callable[[Event], None]]] = (
-            defaultdict(list)
-        )
-        self.event_log: List[Event] = []
-        self.lock = threading.Lock()
-
-    def subscribe(
-        self, event_type: EventType, handler: Callable[[Event], None]
-    ) -> None:
-        """Subscribe a handler to an event type."""
-        with self.lock:
-            self.subscribers[event_type].append(handler)
-
-    def publish(
-        self, event_type: EventType, payload: Dict[str, Any], source: str
-    ) -> Event:
-        """Publish an event to all subscribers."""
-        event = Event(
-            event_id=uuid.uuid4().hex[:12],
-            event_type=event_type,
-            timestamp=time.time(),
-            source=source,
-            payload=payload,
-        )
-
-        with self.lock:
-            self.event_log.append(event)
-
-        span_id = TRACER.start_span(
-            f"event_{event_type.value}",
-            SpanType.EVENT_PUBLISHED,
-            attributes={"event_type": event_type.value, "source": source},
-        )
-
-        for handler in list(self.subscribers.get(event_type, [])):
-            try:
-                handler(event)
-            except Exception as exc:  # noqa: BLE001 (isolate handler failures)
-                TRACER.log_event(
-                    "EVENT_HANDLER_ERROR",
-                    {"error": str(exc), "event": event.event_id},
-                )
-
-        TRACER.end_span(span_id)
-        return event
-
-    def get_events(
-        self,
-        event_type: Optional[EventType] = None,
-        since: Optional[float] = None,
-    ) -> List[Event]:
-        """Query event log."""
-        with self.lock:
-            events = self.event_log
-            if event_type:
-                events = [e for e in events if e.event_type == event_type]
-            if since:
-                events = [e for e in events if e.timestamp >= since]
-            return list(events)
-
-
-# Global event bus
-EVENT_BUS = EventBus()
 
 
 # ============================================================
