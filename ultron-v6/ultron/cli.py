@@ -51,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         "serve", help="Run the health/metrics HTTP server"
     )
     serve_parser.add_argument(
-        "--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)"
+        "--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)"
     )
     serve_parser.add_argument(
         "--port", type=int, default=8080, help="Bind port (default: 8080)"

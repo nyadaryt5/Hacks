@@ -13,7 +13,8 @@ import json
 import logging
 import shlex
 import string
-import subprocess
+import subprocess  # nosec B404 (pentest tool executes tools by design)
+import tempfile
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -342,13 +343,14 @@ class ULTRONCoordinator:
             attributes={"command": cmd[:100]},
         )
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 (jail-filtered, shell=False)
                 shlex.split(cmd),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd="/tmp",
+                cwd=tempfile.gettempdir(),
                 check=False,
+                shell=False,
             )
             output = result.stdout + "\n" + result.stderr
             if len(output) > self.settings.output_max_chars:

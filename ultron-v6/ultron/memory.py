@@ -59,7 +59,9 @@ class VectorMemory:
         embedding = [0.0] * dim
         words = text.lower().split()
         for word in words:
-            digest = hashlib.md5(word.encode()).hexdigest()  # noqa: S324 (non-crypto)
+            digest = hashlib.md5(
+                word.encode(), usedforsecurity=False
+            ).hexdigest()
             for i in range(0, min(len(digest), dim), 2):
                 idx = int(digest[i:i + 2], 16) % dim
                 embedding[idx] += 1.0

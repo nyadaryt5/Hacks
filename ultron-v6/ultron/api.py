@@ -170,7 +170,7 @@ class UltronHTTPHandler(BaseHTTPRequestHandler):
 
 
 def start_server(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8080,
     ready_check: Callable[[], tuple[bool, str]] | None = None,
     metrics: MetricsRegistry | None = None,
@@ -186,7 +186,7 @@ def start_server(
 
 
 def serve_forever(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8080,
     ready_check: Callable[[], tuple[bool, str]] | None = None,
 ) -> None:
