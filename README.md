@@ -191,7 +191,7 @@ The test suite runs from a fresh clone without any external services:
 
 ```bash
 pip install -e "./ultron-v6[dev]"
-pytest                                     # full suite (144 tests)
+pytest                                     # full suite (151 tests)
 pytest --cov=ultron --cov-fail-under=85    # coverage gate
 flake8 ultron-v6/ultron ultron-v6/ultron_v6.py tests
 mypy ultron-v6/ultron ultron-v6/ultron_v6.py
@@ -229,7 +229,7 @@ Python 3.10, 3.11 and 3.12.
     │   ├── api.py                  # health/metrics server
     │   └── cli.py                  # command line interface
     ├── ultron_v6.py                # backwards-compatible entry module
-    ├── setup.py / pyproject.toml   # packaging
+    ├── pyproject.toml              # PEP 621 packaging + dependencies
     ├── requirements*.txt/.lock     # manifests + pinned lockfiles
     ├── .env.example                # environment variable reference
     └── LICENSE
@@ -250,6 +250,18 @@ ULTRON includes multiple safety layers:
 
 **Always ensure you have written authorization before testing any
 infrastructure.** Unauthorized scanning is illegal in most jurisdictions.
+
+### Secret management
+
+`GOOGLE_API_KEY` is read from the environment. For local use a `.env` file is
+fine, but in any **deployed or shared context** source the key from a secret
+manager — AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault, or GitHub
+Actions secrets — rather than a plain, long-lived `.env` file. Never commit
+real keys.
+
+A full threat model (prompt-injection, jail-bypass, key-exposure and
+out-of-scope-targeting risks, each with a mitigation reference) is documented
+in [SECURITY.md](SECURITY.md).
 
 ## License
 

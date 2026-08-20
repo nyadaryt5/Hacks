@@ -5,6 +5,37 @@ All notable changes to ULTRON v6 are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.1] - 2026-08-21
+
+### Added
+
+- `test_smoke.py`: fresh-clone smoke test asserting `ultron-v6 --version`
+  exits 0 and `ultron.cli` imports with no network access.
+- Session-wide `GOOGLE_API_KEY` fixture in `tests/conftest.py` so the whole
+  suite runs from a fresh clone with no real key and no external services.
+- PEP 621 `[project]` metadata in `ultron-v6/pyproject.toml` with explicit
+  runtime and dev dependencies (previously only declared in `setup.py`).
+
+### Fixed
+
+- Activated the CI pipeline: the workflow was stashed in
+  `.github/_workflows_backup/` and never ran; it now lives at
+  `.github/workflows/ci.yml` and runs lint, typecheck, a 3.10–3.12 test
+  matrix and security scans on every push and PR.
+- Repaired `tests/test_offline_mode.py`, which called removed APIs and left
+  the suite red; rewritten against the real `GoogleAIClient`,
+  `VectorMemory` and `DatabaseManager` interfaces with mocked HTTP transport.
+
+### Changed
+
+- Removed `ultron-v6/setup.py` in favour of a single `pyproject.toml` source
+  of truth; the package version is derived dynamically from
+  `ultron.__version__`.
+- CI now pins `actions/checkout@v4` / `actions/setup-python@v5` and caches
+  pip keyed on the lockfiles.
+- Documented an explicit threat model and secret-management guidance in
+  `SECURITY.md`.
+
 ## [6.1.0] - 2026-08-20
 
 ### Added
