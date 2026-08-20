@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from datetime import datetime
-from typing import Any, Tuple
+from typing import Any
 
 try:  # pragma: no cover - exercised via both paths in tests
     from sqlalchemy import (  # type: ignore[import-untyped]
@@ -206,7 +206,7 @@ class SQLiteDatabaseManager:
         conn.executescript(self._SCHEMA)
         conn.commit()
 
-    def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> Any:
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         with self.lock:
             return self._get_conn().execute(sql, params)
 
@@ -219,10 +219,9 @@ class SQLiteDatabaseManager:
             self._local.conn.close()
 
 
-if HAS_SQLALCHEMY:
-    DatabaseManager = SQLAlchemyDatabaseManager
-else:
-    DatabaseManager = SQLiteDatabaseManager
+DatabaseManager = (
+    SQLAlchemyDatabaseManager if HAS_SQLALCHEMY else SQLiteDatabaseManager
+)
 
 
 __all__ = [

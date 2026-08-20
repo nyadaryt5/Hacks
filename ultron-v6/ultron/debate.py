@@ -8,7 +8,7 @@ AGAINST it, and a neutral judge synthesizes a verdict
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 from ultron.json_utils import parse_json_response
 from ultron.tracing import TRACER, SpanType
@@ -20,12 +20,12 @@ if TYPE_CHECKING:  # pragma: no cover
 class DebateProtocol:
     """Multi-agent debate for complex decisions."""
 
-    def __init__(self, llm_client: "GoogleAIClient"):
+    def __init__(self, llm_client: GoogleAIClient):
         self.llm = llm_client
 
     def debate(
-        self, proposed_action: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, proposed_action: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         """Run a debate between two opposing agents.
 
         Returns the synthesized decision.

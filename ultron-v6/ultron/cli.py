@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from typing import List, Optional
 
 from ultron import __version__
 from ultron.api import serve_forever
@@ -76,7 +75,7 @@ def _add_common_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns the process exit code."""
     if argv is None:
         argv = sys.argv[1:]

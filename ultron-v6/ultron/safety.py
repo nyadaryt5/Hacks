@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import List, Set, Tuple
 
 FORBIDDEN_PATTERNS = [
     r"rm\s+-rf\s+/",
@@ -30,8 +29,8 @@ class SafetyJail:
 
     def __init__(
         self,
-        allowed_targets: Set[str],
-        allowed_networks: List[
+        allowed_targets: set[str],
+        allowed_networks: list[
             ipaddress.IPv4Network | ipaddress.IPv6Network
         ],
     ):
@@ -42,7 +41,7 @@ class SafetyJail:
         if not target:
             return True
         try:
-            ip = ipaddress.ip_address(target.split(":")[0])
+            ip = ipaddress.ip_address(target.split(":", maxsplit=1)[0])
             return any(
                 ip in net for net in self.allowed_networks
             ) or target in self.allowed_targets
@@ -52,7 +51,7 @@ class SafetyJail:
                 for allowed in self.allowed_targets
             )
 
-    def filter_command(self, cmd: str) -> Tuple[bool, str]:
+    def filter_command(self, cmd: str) -> tuple[bool, str]:
         for pattern in FORBIDDEN_PATTERNS:
             try:
                 if re.search(pattern, cmd, re.IGNORECASE):

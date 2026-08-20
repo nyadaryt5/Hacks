@@ -15,7 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,11 +37,11 @@ class Span:
     name: str
     span_type: SpanType
     start_time: float
-    end_time: Optional[float] = None
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    end_time: float | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
     status: str = "active"
-    parent_span_id: Optional[str] = None
-    children: List[str] = field(default_factory=list)
+    parent_span_id: str | None = None
+    children: list[str] = field(default_factory=list)
     tokens_used: int = 0
     cost_usd: float = 0.0
 
@@ -61,8 +61,8 @@ class Tracer:
 
     def __init__(self, service_name: str = "ultron-v6"):
         self.service_name = service_name
-        self.traces: List[Span] = []
-        self.active_spans: Dict[str, Span] = {}
+        self.traces: list[Span] = []
+        self.active_spans: dict[str, Span] = {}
         self.lock = threading.Lock()
         self.logger = logging.getLogger("ultron.tracing")
 
@@ -70,8 +70,8 @@ class Tracer:
         self,
         name: str,
         span_type: SpanType,
-        attributes: Optional[Dict[str, Any]] = None,
-        parent_span_id: Optional[str] = None,
+        attributes: dict[str, Any] | None = None,
+        parent_span_id: str | None = None,
     ) -> str:
         """Start a new trace span and return its span id."""
         span_id = uuid.uuid4().hex[:12]
@@ -119,13 +119,13 @@ class Tracer:
                     tokens_used,
                 )
 
-    def log_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
+    def log_event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         """Log a structured event."""
         self.logger.info(
             "[EVENT] %s | %s", event_type, json.dumps(data or {}, default=str)[:200]
         )
 
-    def get_trace_summary(self) -> Dict[str, Any]:
+    def get_trace_summary(self) -> dict[str, Any]:
         """Get summary of all traces."""
         with self.lock:
             completed = [s for s in self.traces if s.end_time]

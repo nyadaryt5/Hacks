@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Dict, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any
 
 from ultron.tracing import TRACER
 
 if TYPE_CHECKING:  # pragma: no cover
     from ultron.config import ULTRONSettings
+
+MINUTE_SECONDS = 60
+HOUR_SECONDS = 3600
+DAY_SECONDS = 86400
 
 
 class _KeyRateLimiter:
@@ -28,10 +32,10 @@ class _KeyRateLimiter:
 
     def reset_if_needed(self) -> None:
         now = time.time()
-        if now - self.minute_start >= 60:
+        if now - self.minute_start >= MINUTE_SECONDS:
             self.requests_this_minute = 0
             self.minute_start = now
-        if now - self.day_start >= 86400:
+        if now - self.day_start >= DAY_SECONDS:
             self.requests_today = 0
             self.day_start = now
 
@@ -39,7 +43,7 @@ class _KeyRateLimiter:
 class BudgetGovernor:
     """Real-time cost governor that tracks token usage and enforces limits."""
 
-    def __init__(self, settings: "ULTRONSettings"):
+    def __init__(self, settings: ULTRONSettings):
         self.max_tokens_session = getattr(
             settings.budget, "max_tokens_per_session", 500000
         )
@@ -55,12 +59,12 @@ class BudgetGovernor:
         self.hour_start = time.time()
         self.lock = threading.Lock()
         self.budget_exceeded = False
-        self.warnings_issued: Set[str] = set()
-        self.key_limiters: Dict[str, _KeyRateLimiter] = {}
+        self.warnings_issued: set[str] = set()
+        self.key_limiters: dict[str, _KeyRateLimiter] = {}
 
     def check_budget(
-        self, estimated_tokens: int = 500, api_key: Optional[str] = None
-    ) -> Tuple[bool, str]:
+        self, estimated_tokens: int = 500, api_key: str | None = None
+    ) -> tuple[bool, str]:
         """Check if we can proceed with an LLM call."""
         with self.lock:
             self._reset_counters_if_needed()
@@ -112,7 +116,7 @@ class BudgetGovernor:
             return True, "OK"
 
     def record_usage(
-        self, tokens_used: int, api_key: Optional[str] = None
+        self, tokens_used: int, api_key: str | None = None
     ) -> None:
         """Record token usage after an LLM call."""
         with self.lock:
@@ -127,14 +131,14 @@ class BudgetGovernor:
 
     def _reset_counters_if_needed(self) -> None:
         now = time.time()
-        if now - self.minute_start >= 60:
+        if now - self.minute_start >= MINUTE_SECONDS:
             self.tokens_used_minute = 0
             self.minute_start = now
-        if now - self.hour_start >= 3600:
+        if now - self.hour_start >= HOUR_SECONDS:
             self.tokens_used_hour = 0
             self.hour_start = now
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         with self.lock:
             return {
                 "tokens_used_session": self.tokens_used_session,

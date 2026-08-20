@@ -11,7 +11,6 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import Optional
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-24s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
@@ -43,7 +42,7 @@ class JsonFormatter(logging.Formatter):
 def configure_logging(
     level: str = "INFO",
     json_format: bool = False,
-    log_file: Optional[str] = None,
+    log_file: str | None = None,
 ) -> logging.Logger:
     """Configure the root logger.
 

@@ -8,10 +8,10 @@ LLMs frequently wrap JSON in markdown fences, prose or code blocks.
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 
-def parse_json_response(response: str) -> Optional[Any]:
+def parse_json_response(response: str) -> Any | None:
     """Parse JSON out of an LLM response, tolerating common wrapping."""
     if not response or response.startswith("[ERROR]") or response.startswith(
         "[BUDGET]"
@@ -23,7 +23,7 @@ def parse_json_response(response: str) -> Optional[Any]:
         pass
     if "```json" in response:
         try:
-            code = response.split("```json")[1].split("```")[0].strip()
+            code = response.split("```json")[1].split("```", maxsplit=1)[0].strip()
             return json.loads(code)
         except (json.JSONDecodeError, ValueError, IndexError):
             pass

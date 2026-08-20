@@ -11,9 +11,10 @@ import threading
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from ultron.tracing import TRACER, SpanType
 
@@ -39,7 +40,7 @@ class Event:
     event_type: EventType
     timestamp: float
     source: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     correlation_id: str = field(default="")
 
 
@@ -47,10 +48,10 @@ class EventBus:
     """In-process event bus for decoupled agent communication."""
 
     def __init__(self) -> None:
-        self.subscribers: Dict[EventType, List[Callable[[Event], None]]] = (
+        self.subscribers: dict[EventType, list[Callable[[Event], None]]] = (
             defaultdict(list)
         )
-        self.event_log: List[Event] = []
+        self.event_log: list[Event] = []
         self.lock = threading.Lock()
 
     def subscribe(
@@ -61,7 +62,7 @@ class EventBus:
             self.subscribers[event_type].append(handler)
 
     def publish(
-        self, event_type: EventType, payload: Dict[str, Any], source: str
+        self, event_type: EventType, payload: dict[str, Any], source: str
     ) -> Event:
         """Publish an event to all subscribers."""
         event = Event(
@@ -95,9 +96,9 @@ class EventBus:
 
     def get_events(
         self,
-        event_type: Optional[EventType] = None,
-        since: Optional[float] = None,
-    ) -> List[Event]:
+        event_type: EventType | None = None,
+        since: float | None = None,
+    ) -> list[Event]:
         """Query event log."""
         with self.lock:
             events = self.event_log

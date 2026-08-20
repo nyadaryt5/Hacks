@@ -16,7 +16,7 @@ import string
 import subprocess
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any
 
 from ultron.budget import BudgetGovernor
 from ultron.db import DatabaseManager
@@ -48,16 +48,17 @@ def _phase_header(name: str) -> str:
 class ULTRONCoordinator:
     """Main coordinator using FSM architecture."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (dependency-injection container)
         self,
-        settings: "ULTRONSettings",
-        db: Optional[DatabaseManager] = None,
-        budget: Optional[BudgetGovernor] = None,
-        llm: Optional[GoogleAIClient] = None,
-        memory: Optional[VectorMemory] = None,
-        debate: Optional[DebateProtocol] = None,
-        event_bus: Optional[EventBus] = None,
-        tracer: Optional[Tracer] = None,
+        settings: ULTRONSettings,
+        *,
+        db: DatabaseManager | None = None,
+        budget: BudgetGovernor | None = None,
+        llm: GoogleAIClient | None = None,
+        memory: VectorMemory | None = None,
+        debate: DebateProtocol | None = None,
+        event_bus: EventBus | None = None,
+        tracer: Tracer | None = None,
     ):
         self.settings = settings
         self.target = settings.target
@@ -81,8 +82,8 @@ class ULTRONCoordinator:
         self.event_bus = event_bus if event_bus is not None else EVENT_BUS
 
         # Scope
-        self.allowed_targets: Set[str] = {self.target}
-        self.allowed_networks: List[
+        self.allowed_targets: set[str] = {self.target}
+        self.allowed_networks: list[
             ipaddress.IPv4Network | ipaddress.IPv6Network
         ] = []
         try:
@@ -197,7 +198,7 @@ class ULTRONCoordinator:
         if parsed:
             print(f"  [ANALYSIS] {json.dumps(parsed, default=str)[:200]}")
 
-    def _run_planning(self) -> Dict[str, Any]:
+    def _run_planning(self) -> dict[str, Any]:
         """Phase 3: AI plans next action."""
         self.tracer.log_event("PHASE", {"phase": "PLANNING"})
         print(_phase_header("PHASE 3: PLANNING"))
@@ -228,7 +229,7 @@ class ULTRONCoordinator:
             "safety_level": "safe",
         }
 
-    def _run_authorization(self, plan: Dict[str, Any]) -> bool:
+    def _run_authorization(self, plan: dict[str, Any]) -> bool:
         """Phase 4: Multi-agent debate for authorization."""
         self.tracer.log_event("PHASE", {"phase": "AUTHORIZATION"})
         print(_phase_header("PHASE 4: AUTHORIZATION (Multi-Agent Debate)"))
@@ -248,13 +249,13 @@ class ULTRONCoordinator:
         print("  [AUTH] Safe action, proceeding.")
         return True
 
-    def _run_execution(self, plan: Dict[str, Any]) -> str:
+    def _run_execution(self, plan: dict[str, Any]) -> str:
         """Phase 5: Execute the planned action."""
         self.tracer.log_event("PHASE", {"phase": "EXECUTION"})
         print(_phase_header("PHASE 5: EXECUTION"))
 
         action = plan.get("action", "")
-        params: Dict[str, str] = {
+        params: dict[str, str] = {
             "target": self.target,
             "url": f"http://{self.target}",
         }
@@ -347,6 +348,7 @@ class ULTRONCoordinator:
                 text=True,
                 timeout=timeout,
                 cwd="/tmp",
+                check=False,
             )
             output = result.stdout + "\n" + result.stderr
             if len(output) > self.settings.output_max_chars:

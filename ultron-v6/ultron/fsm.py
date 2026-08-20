@@ -12,7 +12,6 @@ from __future__ import annotations
 import threading
 import time
 from enum import Enum, auto
-from typing import Dict, List, Set, Tuple
 
 from ultron.tracing import TRACER, SpanType
 
@@ -32,7 +31,7 @@ class AgentState(Enum):
 
 
 # Define all valid state transitions
-VALID_TRANSITIONS: Dict[AgentState, Set[AgentState]] = {
+VALID_TRANSITIONS: dict[AgentState, set[AgentState]] = {
     AgentState.IDLE: {AgentState.DISCOVERY},
     AgentState.DISCOVERY: {
         AgentState.ANALYSIS,
@@ -88,7 +87,7 @@ class FiniteStateMachine:
     def __init__(self, agent_id: str):
         self.agent_id = agent_id
         self.current_state = AgentState.IDLE
-        self.history: List[Tuple[AgentState, AgentState, float]] = []
+        self.history: list[tuple[AgentState, AgentState, float]] = []
         self.lock = threading.Lock()
 
     def transition(self, target_state: AgentState) -> bool:
@@ -124,7 +123,7 @@ class FiniteStateMachine:
     def can_transition(self, target_state: AgentState) -> bool:
         return target_state in VALID_TRANSITIONS.get(self.current_state, set())
 
-    def get_valid_transitions(self) -> List[AgentState]:
+    def get_valid_transitions(self) -> list[AgentState]:
         return list(VALID_TRANSITIONS.get(self.current_state, set()))
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from ultron.db import HAS_SQLALCHEMY
 
@@ -26,11 +26,11 @@ if TYPE_CHECKING:  # pragma: no cover
 class VectorMemory:
     """Vector database for semantic memory."""
 
-    def __init__(self, db_manager: "DatabaseManager", backend: str = "auto"):
+    def __init__(self, db_manager: DatabaseManager, backend: str = "auto"):
         self.db = db_manager
-        self.embeddings: List[Dict[str, Any]] = []  # In-memory store
+        self.embeddings: list[dict[str, Any]] = []  # In-memory store
         self._use_chromadb = False
-        self._chroma_collection: Optional[Any] = None
+        self._chroma_collection: Any | None = None
         if backend not in ("auto", "chroma", "hash"):
             raise ValueError(
                 f"Unknown backend {backend!r}; expected auto, chroma or hash"
@@ -56,7 +56,7 @@ class VectorMemory:
         except ImportError:
             TRACER.log_event("VECTOR_DB_INIT", {"backend": "hash_fallback"})
 
-    def _generate_embedding(self, text: str) -> List[float]:
+    def _generate_embedding(self, text: str) -> list[float]:
         """Generate a simple hash-based embedding (128 dimensions)."""
         dim = 128
         embedding = [0.0] * dim
@@ -71,9 +71,9 @@ class VectorMemory:
             embedding = [x / magnitude for x in embedding]
         return embedding
 
-    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between two vectors."""
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=True))
         mag_a = sum(x * x for x in a) ** 0.5
         mag_b = sum(x * x for x in b) ** 0.5
         if mag_a == 0 or mag_b == 0:
@@ -151,7 +151,7 @@ class VectorMemory:
 
         TRACER.end_span(span_id)
 
-    def query_similar(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def query_similar(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         """Find similar past experiences using semantic search."""
         span_id = TRACER.start_span(
             "vector_query",
@@ -160,7 +160,7 @@ class VectorMemory:
         )
 
         query_embedding = self._generate_embedding(query)
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         if self._use_chromadb and self._chroma_collection:
             response = self._chroma_collection.query(
@@ -197,8 +197,8 @@ class VectorMemory:
         return results
 
     def get_relevant_lessons(
-        self, current_state: Dict[str, Any], limit: int = 3
-    ) -> List[Dict[str, Any]]:
+        self, current_state: dict[str, Any], limit: int = 3
+    ) -> list[dict[str, Any]]:
         """Get lessons relevant to the current situation."""
         state_summary = json.dumps(current_state, default=str)[:500]
         return self.query_similar(state_summary, top_k=limit)

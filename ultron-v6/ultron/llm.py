@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -22,6 +22,10 @@ if TYPE_CHECKING:  # pragma: no cover
     from ultron.config import ULTRONSettings
 
 _LOGGER = logging.getLogger(__name__)
+
+HTTP_TOO_MANY_REQUESTS = 429
+HTTP_BAD_REQUEST = 400
+HTTP_SERVER_ERROR = 500
 
 GEMINI_CONTEXT_PREFIX = (
     "You are an expert cybersecurity AI assistant operating in an "
@@ -39,16 +43,16 @@ class GoogleAIClient:
 
     def __init__(
         self,
-        settings: "ULTRONSettings",
-        budget: "BudgetGovernor",
-        transport: Optional[httpx.BaseTransport] = None,
+        settings: ULTRONSettings,
+        budget: BudgetGovernor,
+        transport: httpx.BaseTransport | None = None,
         max_retries: int = 2,
         retry_backoff: float = 0.5,
     ):
         self.settings = settings
         self.budget = budget
         self.ai = settings.google_ai
-        self.api_keys: List[str] = list(self.ai.api_keys)
+        self.api_keys: list[str] = list(self.ai.api_keys)
         self.model = self.ai.model
         self.base_url = self.ai.base_url
         self.max_retries = max_retries
@@ -82,7 +86,7 @@ class GoogleAIClient:
             return f"[BUDGET] {reason}"
 
         full_system = GEMINI_CONTEXT_PREFIX + "\n\n" + system
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": full_system},
@@ -131,7 +135,7 @@ class GoogleAIClient:
         TRACER.end_span(span_id, status="error")
         return "[ERROR] API failed: retries exhausted"
 
-    def _post(self, api_key: str, payload: Dict[str, Any]) -> Any:
+    def _post(self, api_key: str, payload: dict[str, Any]) -> Any:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
@@ -143,11 +147,11 @@ class GoogleAIClient:
         except httpx.HTTPError as exc:
             raise _TransientFailure(str(exc)) from exc
 
-        if response.status_code == 429:
+        if response.status_code == HTTP_TOO_MANY_REQUESTS:
             raise _RateLimited()
-        if response.status_code >= 500:
+        if response.status_code >= HTTP_SERVER_ERROR:
             raise _TransientFailure(f"HTTP {response.status_code}")
-        if response.status_code >= 400:
+        if response.status_code >= HTTP_BAD_REQUEST:
             raise _TransientFailure(f"HTTP {response.status_code}")
         try:
             return response.json()

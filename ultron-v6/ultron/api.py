@@ -11,8 +11,8 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable, Dict, Optional, Tuple
 
 from ultron import __version__
 from ultron.tracing import TRACER
@@ -30,11 +30,11 @@ class MetricsRegistry:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.counters: Dict[Tuple[str, ...], int] = {}
-        self.gauges: Dict[str, float] = {}
+        self.counters: dict[tuple[str, ...], int] = {}
+        self.gauges: dict[str, float] = {}
         self.start_time = time.time()
 
-    def inc(self, name: str, labels: Tuple[str, ...] = ()) -> None:
+    def inc(self, name: str, labels: tuple[str, ...] = ()) -> None:
         with self.lock:
             key = (name, labels)
             self.counters[key] = self.counters.get(key, 0) + 1
@@ -43,7 +43,7 @@ class MetricsRegistry:
         with self.lock:
             self.gauges[name] = value
 
-    def snapshot(self) -> Dict[str, float]:
+    def snapshot(self) -> dict[str, float]:
         with self.lock:
             counters = dict(self.counters)
             gauges = dict(self.gauges)
@@ -74,7 +74,9 @@ class MetricsRegistry:
         for (name, labels), value in sorted(snap["counters"].items()):
             label_str = ",".join(
                 f'{key}="{val}"'
-                for key, val in zip(labels[0::2], labels[1::2])
+                for key, val in zip(
+                    labels[0::2], labels[1::2], strict=True
+                )
             )
             lines.append(f"{name}{{{label_str}}} {value}")
         for name, value in sorted(snap["gauges"].items()):
@@ -141,8 +143,8 @@ class UltronHTTPHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(404, {"error": "not found"})
 
-    def _readiness(self) -> Tuple[bool, str]:
-        ready_check: Optional[Callable[[], Tuple[bool, str]]] = getattr(
+    def _readiness(self) -> tuple[bool, str]:
+        ready_check: Callable[[], tuple[bool, str]] | None = getattr(
             self.server, "ready_check", None
         )
         if ready_check is None:
@@ -153,7 +155,7 @@ class UltronHTTPHandler(BaseHTTPRequestHandler):
             _LOGGER.warning("readiness check failed: %s", exc)
             return False, str(exc)
 
-    def _send_json(self, status: int, payload: Dict[str, object]) -> None:
+    def _send_json(self, status: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -170,8 +172,8 @@ class UltronHTTPHandler(BaseHTTPRequestHandler):
 def start_server(
     host: str = "0.0.0.0",
     port: int = 8080,
-    ready_check: Optional[Callable[[], Tuple[bool, str]]] = None,
-    metrics: Optional[MetricsRegistry] = None,
+    ready_check: Callable[[], tuple[bool, str]] | None = None,
+    metrics: MetricsRegistry | None = None,
 ) -> ThreadingHTTPServer:
     """Create and bind (but do not serve) the monitoring HTTP server."""
     server = ThreadingHTTPServer((host, port), UltronHTTPHandler)
@@ -186,7 +188,7 @@ def start_server(
 def serve_forever(
     host: str = "0.0.0.0",
     port: int = 8080,
-    ready_check: Optional[Callable[[], Tuple[bool, str]]] = None,
+    ready_check: Callable[[], tuple[bool, str]] | None = None,
 ) -> None:
     """Run the monitoring server until interrupted."""
     server = start_server(host=host, port=port, ready_check=ready_check)

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ if HAS_PYDANTIC:
 
         model_config = SettingsConfigDict(env_prefix="ULTRON_", extra="ignore")
 
-        api_keys: List[str] = Field(
+        api_keys: list[str] = Field(
             default_factory=list, description="List of Gemini API keys"
         )
         model: str = Field(default="gemini-1.5-flash", description="Gemini model")
@@ -58,9 +58,9 @@ if HAS_PYDANTIC:
         timeout_seconds: int = Field(default=120, ge=5, le=300)
 
         @staticmethod
-        def _env_api_keys() -> List[str]:
+        def _env_api_keys() -> list[str]:
             """Collect API keys from GOOGLE_API_KEY and GOOGLE_API_KEY_1..10."""
-            keys: List[str] = []
+            keys: list[str] = []
             for i in range(1, 11):
                 key = os.getenv(f"GOOGLE_API_KEY_{i}", "")
                 if not key and i == 1:
@@ -69,7 +69,7 @@ if HAS_PYDANTIC:
                     keys.append(key)
             return keys
 
-        def load_keys_from_env(self) -> List[str]:
+        def load_keys_from_env(self) -> list[str]:
             """Populate ``api_keys`` from the environment if not set."""
             if not self.api_keys:
                 self.api_keys = self._env_api_keys()
@@ -122,7 +122,7 @@ if HAS_PYDANTIC:
         log_level: str = Field(default="INFO", description="Logging level")
         target: str = Field(default="", description="Target IP or domain")
 
-    def load_settings(overrides: Optional[Dict[str, Any]] = None) -> ULTRONSettings:
+    def load_settings(overrides: dict[str, Any] | None = None) -> ULTRONSettings:
         """Load and validate all settings. Fails fast with clear errors.
 
         Raises ``ConfigurationError`` when required configuration is missing
@@ -156,7 +156,7 @@ else:
 
     @dataclass
     class GoogleAIConfig:
-        api_keys: List[str] = field(default_factory=list)
+        api_keys: list[str] = field(default_factory=list)
         model: str = "gemini-1.5-flash"
         base_url: str = GEMINI_BASE_URL
         max_rpm_per_key: int = 14
@@ -166,8 +166,8 @@ else:
         timeout_seconds: int = 120
 
         @staticmethod
-        def _env_api_keys() -> List[str]:
-            keys: List[str] = []
+        def _env_api_keys() -> list[str]:
+            keys: list[str] = []
             for i in range(1, 11):
                 key = os.getenv(f"GOOGLE_API_KEY_{i}", "")
                 if not key and i == 1:
@@ -176,7 +176,7 @@ else:
                     keys.append(key)
             return keys
 
-        def load_keys_from_env(self) -> List[str]:
+        def load_keys_from_env(self) -> list[str]:
             if not self.api_keys:
                 self.api_keys = self._env_api_keys()
             return self.api_keys
@@ -207,7 +207,7 @@ else:
         log_level: str = "INFO"
         target: str = ""
 
-    def load_settings(overrides: Optional[Dict[str, Any]] = None) -> ULTRONSettings:
+    def load_settings(overrides: dict[str, Any] | None = None) -> ULTRONSettings:
         """Manual configuration fallback (no Pydantic installed)."""
         overrides = overrides or {}
         settings = ULTRONSettings(**overrides)
