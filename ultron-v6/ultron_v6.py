@@ -88,10 +88,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s | %(levelname)-7s | %(name)-20s | %(message)s",
-    )
+    from ultron.logging_setup import configure_logging
+
+    configure_logging(level=args.log_level)
 
     try:
         settings = load_settings({"target": args.target})
