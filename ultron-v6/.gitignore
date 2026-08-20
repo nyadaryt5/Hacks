@@ -1,0 +1,42 @@
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Reports
+ULTRON_V6_REPORT_*.md
+
+# Logs
+*.log
+ultron_traces.log
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ChromaDB (vector store)
+.chromadb/
+chroma_data/
+
+# Tool outputs
+/tmp/
+query_results/
