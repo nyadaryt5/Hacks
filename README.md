@@ -229,7 +229,7 @@ Python 3.10, 3.11 and 3.12.
     │   ├── api.py                  # health/metrics server
     │   └── cli.py                  # command line interface
     ├── ultron_v6.py                # backwards-compatible entry module
-    ├── setup.py / pyproject.toml   # packaging
+    ├── pyproject.toml              # PEP 621 packaging + dependencies
     ├── requirements*.txt/.lock     # manifests + pinned lockfiles
     ├── .env.example                # environment variable reference
     └── LICENSE
