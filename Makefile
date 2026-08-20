@@ -1,0 +1,46 @@
+PYTHON ?= python3
+PIP ?= $(PYTHON) -m pip
+PYTEST ?= $(PYTHON) -m pytest
+PACKAGE := ./ultron-v6
+
+.PHONY: install dev test coverage lint typecheck security build \
+        docker-up docker-down docker-test clean
+
+install:            ## Install the package (runtime deps only)
+	$(PIP) install -e "$(PACKAGE)"
+
+dev:                ## Install the package with dev tooling
+	$(PIP) install -e "$(PACKAGE)[dev]"
+
+test:               ## Run the test suite
+	$(PYTEST) tests
+
+coverage:           ## Run tests with the coverage gate
+	$(PYTEST) tests --cov=ultron --cov-report=term-missing --cov-fail-under=85
+
+lint:               ## Run flake8 and ruff
+	$(PYTHON) -m flake8 ultron-v6/ultron ultron-v6/ultron_v6.py tests
+	$(PYTHON) -m ruff check ultron-v6/ultron ultron-v6/ultron_v6.py
+
+typecheck:          ## Run strict mypy
+	$(PYTHON) -m mypy ultron-v6/ultron ultron-v6/ultron_v6.py
+
+security:           ## Run bandit and pip-audit
+	$(PYTHON) -m bandit -r ultron-v6/ultron -c pyproject.toml
+	$(PYTHON) -m pip_audit --requirement ultron-v6/requirements.lock
+
+build:              ## Build wheel and sdist
+	$(PYTHON) -m build ultron-v6 --outdir dist
+
+docker-up:          ## Start the app with docker compose
+	docker compose up --build -d
+
+docker-down:        ## Stop the compose stack
+	docker compose down
+
+docker-test:        ## Run the test suite inside the container
+	docker compose run --rm test
+
+clean:              ## Remove build artifacts
+	rm -rf dist build .pytest_cache .mypy_cache .ruff_cache htmlcov coverage.xml
+	find . -name '__pycache__' -type d -prune -exec rm -rf {} +
