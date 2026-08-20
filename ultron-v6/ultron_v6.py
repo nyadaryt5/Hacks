@@ -43,6 +43,7 @@ from ultron.fsm import (  # noqa: F401
     InvalidTransitionError,
     VALID_TRANSITIONS,
 )
+from ultron.json_utils import parse_json_response  # noqa: F401
 from ultron.tracing import TRACER, Span, SpanType, Tracer  # noqa: F401
 from ultron.memory import VectorMemory  # noqa: F401
 from ultron.db import (  # noqa: F401
@@ -269,43 +270,6 @@ class GoogleAIClient:
             key = self.api_keys[self.current_key_idx % len(self.api_keys)]
             self.current_key_idx += 1
             return key
-
-
-# ============================================================
-# JSON PARSER
-# ============================================================
-
-
-def parse_json_response(response: str) -> Optional[Any]:
-    if not response or response.startswith("[ERROR]") or response.startswith(
-        "[BUDGET]"
-    ):
-        return None
-    try:
-        return json.loads(response.strip())
-    except (json.JSONDecodeError, ValueError):
-        pass
-    if "```json" in response:
-        try:
-            code = response.split("```json")[1].split("```")[0].strip()
-            return json.loads(code)
-        except (json.JSONDecodeError, ValueError, IndexError):
-            pass
-    if "```" in response:
-        parts = response.split("```")
-        for i in range(1, len(parts), 2):
-            try:
-                return json.loads(parts[i].strip())
-            except (json.JSONDecodeError, ValueError):
-                continue
-    try:
-        start = response.find("{")
-        end = response.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(response[start:end])
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return None
 
 
 # ============================================================
