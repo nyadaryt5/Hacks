@@ -1,88 +1,142 @@
 #!/usr/bin/env python3
 """
-ULTRON v6.0 — Production-Grade Autonomous Pentest Framework
-============================================================
+ULTRON v6.0 — Autonomous Pentest Framework
+==========================================
 Applied: FSM Core | Event Bus | Vector Memory | Multi-Agent Debate
-         OpenTelemetry | Budget Guardrails | SQLAlchemy ORM | Pydantic Config
-Skipped: Section 2 (Docker isolation) per user request
-Provider: Google AI (Gemini) exclusively
+         Observability | Budget Guardrails | SQLAlchemy ORM | Pydantic Config
+Provider: Google AI (Gemini)
 """
 
-import os, sys, json, sqlite3, subprocess, re, string, ipaddress, time
-import threading, uuid, hashlib, getpass, shlex, logging, signal
-from typing import List, Dict, Optional, Tuple, Set, Any, Callable
-from datetime import datetime, timedelta
-from enum import Enum, auto
-from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from __future__ import annotations
+
+import argparse
+import hashlib
+import ipaddress
+import json
+import logging
+import os
+import re
+import shlex
+import sqlite3
+import string
+import subprocess
+import sys
+import threading
+import time
+import uuid
 from collections import defaultdict
-from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum, auto
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+__version__ = "6.0.0"
+
+_LOGGER = logging.getLogger("ultron")
+
+GEMINI_BASE_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+)
+
+
+class ConfigurationError(Exception):
+    """Raised when runtime configuration is missing or invalid."""
+
 
 # ============================================================
 # SECTION 5: PYDANTIC CONFIGURATION
 # Type-safe, validated at startup, fails fast with clear errors
 # ============================================================
 
-try:
-    from pydantic import BaseModel, Field, validator, ValidationError
-    from pydantic_settings import BaseSettings
+try:  # pragma: no cover - exercised via both paths in tests
+    from pydantic import Field, ValidationError
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+
     HAS_PYDANTIC = True
-except ImportError:
+except ImportError:  # pragma: no cover - exercised via both paths in tests
     HAS_PYDANTIC = False
 
+
 if HAS_PYDANTIC:
+
     class GoogleAIConfig(BaseSettings):
         """Google AI API configuration with validation."""
-        api_keys: List[str] = Field(default_factory=list, description="List of Gemini API keys")
-        model: str = Field(default="gemini-1.5-flash", description="Gemini model to use")
-        base_url: str = Field(
-            default="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-            description="Google AI OpenAI-compatible endpoint"
+
+        model_config = SettingsConfigDict(env_prefix="ULTRON_", extra="ignore")
+
+        api_keys: List[str] = Field(
+            default_factory=list, description="List of Gemini API keys"
         )
-        max_rpm_per_key: int = Field(default=14, description="Max requests per minute per key")
-        max_rpd_per_key: int = Field(default=1400, description="Max requests per day per key")
+        model: str = Field(default="gemini-1.5-flash", description="Gemini model")
+        base_url: str = Field(
+            default=GEMINI_BASE_URL,
+            description="Google AI OpenAI-compatible endpoint",
+        )
+        max_rpm_per_key: int = Field(
+            default=14, ge=1, description="Max requests per minute per key"
+        )
+        max_rpd_per_key: int = Field(
+            default=1400, ge=1, description="Max requests per day per key"
+        )
         temperature: float = Field(default=0.3, ge=0.0, le=2.0)
         max_tokens: int = Field(default=3000, ge=1, le=8192)
         timeout_seconds: int = Field(default=120, ge=5, le=300)
 
-        @validator("api_keys", pre=True, always=True)
-        def load_api_keys(cls, v):
-            if v:
-                return v
-            keys = []
+        @staticmethod
+        def _env_api_keys() -> List[str]:
+            """Collect API keys from GOOGLE_API_KEY and GOOGLE_API_KEY_1..10."""
+            keys: List[str] = []
             for i in range(1, 11):
                 key = os.getenv(f"GOOGLE_API_KEY_{i}", "")
                 if not key and i == 1:
                     key = os.getenv("GOOGLE_API_KEY", "")
                 if key:
-                    keys.append(key(
+                    keys.append(key)
             return keys
 
-        class Config:
-            env_prefix = "ULTRON_"
+        def load_keys_from_env(self) -> List[str]:
+            """Populate ``api_keys`` from the environment if not set."""
+            if not self.api_keys:
+                self.api_keys = self._env_api_keys()
+            return self.api_keys
 
     class BudgetConfig(BaseSettings):
         """Budget guardrails configuration."""
-        max_tokens_per_minute: int = Field(default=10000, description="Token budget per minute")
-        max_tokens_per_hour: int = Field(default=100000, description="Token budget per hour")
-        max_tokens_per_session: int = Field(default=500000, description="Token budget per session")
-        max_cost_per_session_usd: float = Field(default=1.0, description="Max cost in USD")
-        warn_at_percent: float = Field(default=80.0, description="Warn when budget hits this percent")
 
-        class Config:
-            env_prefix = "ULTRON_BUDGET_"
+        model_config = SettingsConfigDict(env_prefix="ULTRON_BUDGET_", extra="ignore")
+
+        max_tokens_per_minute: int = Field(
+            default=10000, ge=1, description="Token budget per minute"
+        )
+        max_tokens_per_hour: int = Field(
+            default=100000, ge=1, description="Token budget per hour"
+        )
+        max_tokens_per_session: int = Field(
+            default=500000, ge=1, description="Token budget per session"
+        )
+        max_cost_per_session_usd: float = Field(
+            default=1.0, ge=0.0, description="Max cost in USD"
+        )
+        warn_at_percent: float = Field(
+            default=80.0, ge=0.0, le=100.0, description="Warn at usage percent"
+        )
 
     class DatabaseConfig(BaseSettings):
         """Database configuration."""
-        url: str = Field(default="sqlite:///ultron_v6.db", description="SQLAlchemy database URL")
-        echo: bool = Field(default=False, description="SQL query logging")
-        pool_size: int = Field(default=5, description="Connection pool size")
 
-        class Config:
-            env_prefix = "ULTRON_DB_"
+        model_config = SettingsConfigDict(env_prefix="ULTRON_DB_", extra="ignore")
+
+        url: str = Field(
+            default="sqlite:///ultron_v6.db", description="SQLAlchemy database URL"
+        )
+        echo: bool = Field(default=False, description="SQL query logging")
+        pool_size: int = Field(default=5, ge=1, description="Connection pool size")
 
     class ULTRONSettings(BaseSettings):
         """Master configuration - validates everything at startup."""
+
+        model_config = SettingsConfigDict(env_prefix="ULTRON_", extra="ignore")
+
         google_ai: GoogleAIConfig = Field(default_factory=GoogleAIConfig)
         budget: BudgetConfig = Field(default_factory=BudgetConfig)
         database: DatabaseConfig = Field(default_factory=DatabaseConfig)
@@ -93,74 +147,110 @@ if HAS_PYDANTIC:
         log_level: str = Field(default="INFO", description="Logging level")
         target: str = Field(default="", description="Target IP or domain")
 
-        @validator("target")
-        def validate_target(cls, v):
-            if not v:
-                raise ValueError("Target is required. Usage: ultron_v6.py <target>")
-            return v
+    def load_settings(overrides: Optional[Dict[str, Any]] = None) -> ULTRONSettings:
+        """Load and validate all settings. Fails fast with clear errors.
 
-        class Config:
-            env_prefix = "ULTRON_"
-
-    def load_settings() -> ULTRONSettings:
-        """Load and validate all settings. Fails fast with clear errors."""
+        Raises ``ConfigurationError`` when required configuration is missing
+        so callers (the CLI) can report it and exit cleanly.
+        """
+        overrides = overrides or {}
         try:
-            settings = ULTRONSettings()
+            settings = ULTRONSettings(**overrides)
+            settings.google_ai.load_keys_from_env()
             if not settings.google_ai.api_keys:
-                print("[FATAL] No GOOGLE_API_KEY configured.")
-                print("  Set with: export GOOGLE_API_KEY='AIza...'")
-                print("  Or: export GOOGLE_API_KEY_1='AIza...' GOOGLE_API_KEY_2='AIza...'")
-                sys.exit(1(
+                _LOGGER.critical("No GOOGLE_API_KEY configured.")
+                _LOGGER.critical("  Set with: export GOOGLE_API_KEY='AIza...'")
+                _LOGGER.critical(
+                    "  Or: export GOOGLE_API_KEY_1='AIza...' "
+                    "GOOGLE_API_KEY_2='AIza...'"
+                )
+                raise ConfigurationError(
+                    "No GOOGLE_API_KEY configured. Set GOOGLE_API_KEY or "
+                    "GOOGLE_API_KEY_1..GOOGLE_API_KEY_10."
+                )
             return settings
-        except ValidationError as e:
-            print(f"[FATAL] Configuration validation failed:")
-            for error in e.errors():
-                print(f"  - {error['loc'][0]}: {error['msg']}")
-            sys.exit(1)
+        except ValidationError as exc:
+            _LOGGER.critical("Configuration validation failed:")
+            for error in exc.errors():
+                _LOGGER.critical("  - %s: %s", error.get("loc"), error.get("msg"))
+            raise ConfigurationError(
+                f"Configuration validation failed: {exc}"
+            ) from exc
 
 else:
-    # Fallback: Manual config parsing without Pydantic
+
     @dataclass
-    class ULTRONSettings:
+    class GoogleAIConfig:
         api_keys: List[str] = field(default_factory=list)
         model: str = "gemini-1.5-flash"
-        base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        max_rpm: int = 14
-        max_rpd: int = 1400
+        base_url: str = GEMINI_BASE_URL
+        max_rpm_per_key: int = 14
+        max_rpd_per_key: int = 1400
         temperature: float = 0.3
         max_tokens: int = 3000
-        timeout: int = 120
+        timeout_seconds: int = 120
+
+        @staticmethod
+        def _env_api_keys() -> List[str]:
+            keys: List[str] = []
+            for i in range(1, 11):
+                key = os.getenv(f"GOOGLE_API_KEY_{i}", "")
+                if not key and i == 1:
+                    key = os.getenv("GOOGLE_API_KEY", "")
+                if key:
+                    keys.append(key)
+            return keys
+
+        def load_keys_from_env(self) -> List[str]:
+            if not self.api_keys:
+                self.api_keys = self._env_api_keys()
+            return self.api_keys
+
+    @dataclass
+    class BudgetConfig:
+        max_tokens_per_minute: int = 10000
+        max_tokens_per_hour: int = 100000
+        max_tokens_per_session: int = 500000
+        max_cost_per_session_usd: float = 1.0
+        warn_at_percent: float = 80.0
+
+    @dataclass
+    class DatabaseConfig:
+        url: str = "sqlite:///ultron_v6.db"
+        echo: bool = False
+        pool_size: int = 5
+
+    @dataclass
+    class ULTRONSettings:
+        google_ai: GoogleAIConfig = field(default_factory=GoogleAIConfig)
+        budget: BudgetConfig = field(default_factory=BudgetConfig)
+        database: DatabaseConfig = field(default_factory=DatabaseConfig)
         max_iterations: int = 30
         max_lateral_depth: int = 2
         output_max_chars: int = 4000
         cache_ttl_hours: int = 24
         log_level: str = "INFO"
         target: str = ""
-        budget_max_tokens_session: int = 500000
-        budget_warn_percent: float = 80.0
 
-    def load_settings() -> ULTRONSettings:
-        settings = ULTRONSettings()
-        for i in range(1, 11):
-            key = os.getenv(f"GOOGLE_API_KEY_{i}", "")
-            if not key and i == 1:
-                key = os.getenv("GOOGLE_API_KEY", "")
-            if key:
-                settings.api_keys.append(key)
-        if not settings.api_keys:
-            print("[FATAL] No GOOGLE_API_KEY configured.")
-            print("  Set with: export GOOGLE_API_KEY='AIza...'")
-            sys.exit(1)
-        if len(sys.argv) < 2:
-            print("[FATAL] Target required. Usage: python3 ultron_v6.py <target>")
-            sys.exit(1)
-        settings.target = sys.argv[1]
+    def load_settings(overrides: Optional[Dict[str, Any]] = None) -> ULTRONSettings:
+        """Manual configuration fallback (no Pydantic installed)."""
+        overrides = overrides or {}
+        settings = ULTRONSettings(**overrides)
+        settings.google_ai.load_keys_from_env()
+        if not settings.google_ai.api_keys:
+            _LOGGER.critical("No GOOGLE_API_KEY configured.")
+            _LOGGER.critical("  Set with: export GOOGLE_API_KEY='AIza...'")
+            raise ConfigurationError(
+                "No GOOGLE_API_KEY configured. Set GOOGLE_API_KEY or "
+                "GOOGLE_API_KEY_1..GOOGLE_API_KEY_10."
+            )
         return settings
 
 
 # ============================================================
-# SECTION 4: OPENTELEMETRY-STYLE STRUCTURED OBSERVABILITY
+# SECTION 4: OBSERVABILITY (OpenTelemetry-style spans)
 # ============================================================
+
 
 class SpanType(Enum):
     LLM_CALL = auto()
@@ -170,6 +260,7 @@ class SpanType(Enum):
     EVENT_CONSUMED = auto()
     VECTOR_QUERY = auto()
     DEBATE = auto()
+
 
 @dataclass
 class Span:
@@ -186,7 +277,7 @@ class Span:
     tokens_used: int = 0
     cost_usd: float = 0.0
 
-    def finish(self, status: str = "completed"):
+    def finish(self, status: str = "completed") -> None:
         self.end_time = time.time()
         self.status = status
 
@@ -196,6 +287,7 @@ class Span:
             return (self.end_time - self.start_time) * 1000
         return 0.0
 
+
 class Tracer:
     """OpenTelemetry-style distributed tracing for ULTRON."""
 
@@ -204,23 +296,15 @@ class Tracer:
         self.traces: List[Span] = []
         self.active_spans: Dict[str, Span] = {}
         self.lock = threading.Lock()
-        self._setup_logging()
+        self.logger = logging.getLogger("ultron.tracing")
 
-    def _setup_logging(self):
-        """Configure structured logging."""
-        log_format = "%(asctime)s | %(levelname)-7s | %(name)-20s | %(message)s"
-        logging.basicConfig(
-            level=logging.INFO,
-            format=log_format,
-            handlers=[
-                logging.StreamHandler(sys.stdout),
-                logging.FileHandler("ultron_traces.log", mode='a')
-            ]
-        )
-        self.logger = logging.getLogger("ultron")
-
-    def start_span(self, name: str, span_type: SpanType,
-                   attributes: Dict = None, parent_span_id: str = None) -> str:
+    def start_span(
+        self,
+        name: str,
+        span_type: SpanType,
+        attributes: Optional[Dict[str, Any]] = None,
+        parent_span_id: Optional[str] = None,
+    ) -> str:
         """Start a new trace span."""
         span_id = uuid.uuid4().hex[:12]
         trace_id = uuid.uuid4().hex[:16]
@@ -232,7 +316,7 @@ class Tracer:
             span_type=span_type,
             start_time=time.time(),
             attributes=attributes or {},
-            parent_span_id=parent_span_id
+            parent_span_id=parent_span_id,
         )
 
         with self.lock:
@@ -241,11 +325,16 @@ class Tracer:
             if parent_span_id and parent_span_id in self.active_spans:
                 self.active_spans[parent_span_id].children.append(span_id)
 
-        self.logger.info(f"[SPAN START] {span_type.name} | {name} | id={span_id}")
+        self.logger.info("[SPAN START] %s | %s | id=%s", span_type.name, name, span_id)
         return span_id
 
-    def end_span(self, span_id: str, status: str = "completed",
-                 tokens_used: int = 0, cost_usd: float = 0.0):
+    def end_span(
+        self,
+        span_id: str,
+        status: str = "completed",
+        tokens_used: int = 0,
+        cost_usd: float = 0.0,
+    ) -> None:
         """End a trace span."""
         with self.lock:
             if span_id in self.active_spans:
@@ -255,15 +344,20 @@ class Tracer:
                 span.cost_usd = cost_usd
                 del self.active_spans[span_id]
                 self.logger.info(
-                    f"[SPAN END] {span.name} | {status} | "
-                    f"{span.duration_ms:.0f}ms | tokens={tokens_used}"
+                    "[SPAN END] %s | %s | %.0fms | tokens=%s",
+                    span.name,
+                    status,
+                    span.duration_ms,
+                    tokens_used,
                 )
 
-    def log_event(self, event_type: str, data: Dict = None):
+    def log_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         """Log a structured event."""
-        self.logger.info(f"[EVENT] {event_type} | {json.dumps(data or {}, default=str)[:200]}")
+        self.logger.info(
+            "[EVENT] %s | %s", event_type, json.dumps(data or {}, default=str)[:200]
+        )
 
-    def get_trace_summary(self) -> Dict:
+    def get_trace_summary(self) -> Dict[str, Any]:
         """Get summary of all traces."""
         with self.lock:
             completed = [s for s in self.traces if s.end_time]
@@ -276,8 +370,9 @@ class Tracer:
                 "by_type": {
                     st.name: len([s for s in completed if s.span_type == st])
                     for st in SpanType
-                }
+                },
             }
+
 
 # Global tracer instance
 TRACER = Tracer()
@@ -287,84 +382,140 @@ TRACER = Tracer()
 # SECTION 4: BUDGET GUARDRAILS
 # ============================================================
 
+
+class _KeyRateLimiter:
+    """Per-API-key requests-per-minute / requests-per-day tracking."""
+
+    def __init__(self) -> None:
+        self.requests_this_minute = 0
+        self.requests_today = 0
+        self.minute_start = time.time()
+        self.day_start = time.time()
+
+    def reset_if_needed(self) -> None:
+        now = time.time()
+        if now - self.minute_start >= 60:
+            self.requests_this_minute = 0
+            self.minute_start = now
+        if now - self.day_start >= 86400:
+            self.requests_today = 0
+            self.day_start = now
+
+
 class BudgetGovernor:
     """Real-time cost governor that tracks token usage and enforces limits."""
 
-    def __init__(self, settings):
-        self.max_tokens_session = getattr(settings, 'budget_max_tokens_session', 500000)
-        self.warn_percent = getattr(settings, 'budget_warn_percent', 80.0)
-        self.max_rpm = getattr(settings, 'max_rpm', 14)
-        self.max_rpd = getattr(settings, 'max_rpd', 1400)
+    def __init__(self, settings: ULTRONSettings):
+        self.max_tokens_session = getattr(
+            settings.budget, "max_tokens_per_session", 500000
+        )
+        self.warn_percent = getattr(settings.budget, "warn_at_percent", 80.0)
+        self.max_rpm = getattr(settings.google_ai, "max_rpm_per_key", 14)
+        self.max_rpd = getattr(settings.google_ai, "max_rpd_per_key", 1400)
 
         self.tokens_used_session = 0
         self.tokens_used_minute = 0
         self.tokens_used_hour = 0
-        self.requests_this_minute = 0
-        self.requests_today = 0
         self.session_start = time.time()
         self.minute_start = time.time()
         self.hour_start = time.time()
         self.lock = threading.Lock()
         self.budget_exceeded = False
-        self.warnings_issued = set()
+        self.warnings_issued: Set[str] = set()
+        self.key_limiters: Dict[str, _KeyRateLimiter] = {}
 
-    def check_budget(self, estimated_tokens: int = 500) -> Tuple[bool, str]:
+    def check_budget(
+        self, estimated_tokens: int = 500, api_key: Optional[str] = None
+    ) -> Tuple[bool, str]:
         """Check if we can proceed with an LLM call."""
         with self.lock:
             self._reset_counters_if_needed()
 
-            # Check session budget
-            if self.tokens_used_session + estimated_tokens > self.max_tokens_session:
+            if (
+                self.tokens_used_session + estimated_tokens
+                > self.max_tokens_session
+            ):
                 self.budget_exceeded = True
-                return Fale, f"Cession budget exceeded:  {self.tokens_used_session}/{self.max_tokens_session} tokens"
+                return (
+                    False,
+                    f"Session budget exceeded: "
+                    f"{self.tokens_used_session}/{self.max_tokens_session} tokens",
+                )
 
-            # Check rate limits
-            if self.requests_this_minute >= self.max_rpm:
-                return False, f"Rate limit: {self.requests_this_minute}/{self.max_rpm} requests this minute"
+            if api_key:
+                limiter = self.key_limiters.setdefault(api_key, _KeyRateLimiter())
+                limiter.reset_if_needed()
+                if limiter.requests_this_minute >= self.max_rpm:
+                    return (
+                        False,
+                        f"Rate limit: {limiter.requests_this_minute}/{self.max_rpm} "
+                        "requests this minute",
+                    )
+                if limiter.requests_today >= self.max_rpd:
+                    return (
+                        False,
+                        f"Daily limit: {limiter.requests_today}/{self.max_rpd} "
+                        "requests today",
+                    )
 
-            if self.requests_today >= self.max_rpd:
-                return Fale, f"Daily limit:  {self.requests_today}/{self.max_rpd} requests today"
-
-            # Warn at threshold
-            usage_percent = (self.tokens_used_session / slef.max_tokens_session) * 100
-            if usage_percent >= self.warn_percent and "session_warn" not in self.warnings_issued:
+            usage_percent = (
+                self.tokens_used_session / self.max_tokens_session
+            ) * 100
+            if (
+                usage_percent >= self.warn_percent
+                and "session_warn" not in self.warnings_issued
+            ):
                 self.warnings_issued.add("session_warn")
-                TRACER.log_event("BUDGET_WARNING",  {
-                    "usage_percent": usage_percent,
-                    "tokens_used": self.tokens_used_session,
-                    "max_tokens": self.max_tokens_session
-                })
+                TRACER.log_event(
+                    "BUDGET_WARNING",
+                    {
+                        "usage_percent": usage_percent,
+                        "tokens_used": self.tokens_used_session,
+                        "max_tokens": self.max_tokens_session,
+                    },
+                )
 
             return True, "OK"
 
-    def record_usage(self, tokens_used: int):
+    def record_usage(
+        self, tokens_used: int, api_key: Optional[str] = None
+    ) -> None:
         """Record token usage after an LLM call."""
         with self.lock:
             self.tokens_used_session += tokens_used
             self.tokens_used_minute += tokens_used
             self.tokens_used_hour += tokens_used
-            self.requests_this_minute += 1
-            self.requests_today += 1
+            if api_key:
+                limiter = self.key_limiters.setdefault(api_key, _KeyRateLimiter())
+                limiter.reset_if_needed()
+                limiter.requests_this_minute += 1
+                limiter.requests_today += 1
 
-    def _reset_counters_if_needed(self):
+    def _reset_counters_if_needed(self) -> None:
         now = time.time()
         if now - self.minute_start >= 60:
             self.tokens_used_minute = 0
-            self.requests_this_minute = 0
             self.minute_start = now
         if now - self.hour_start >= 3600:
             self.tokens_used_hour = 0
             self.hour_start = now
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> Dict[str, Any]:
         with self.lock:
-            reutrn {
+            return {
                 "tokens_used_session": self.tokens_used_session,
                 "max_tokens_session": self.max_tokens_session,
-                "usage_percent": (self.tokens_used_session / self.max_tokens_session) * 100,
-                "requests_this_minute": self.requests_this_minute,
-                "requests_today": self.requests_today,
-                "budget_exceeded": self.budget_exceeded
+                "usage_percent": (
+                    self.tokens_used_session / self.max_tokens_session
+                )
+                * 100,
+                "requests_this_minute": sum(
+                    k.requests_this_minute for k in self.key_limiters.values()
+                ),
+                "requests_today": sum(
+                    k.requests_today for k in self.key_limiters.values()
+                ),
+                "budget_exceeded": self.budget_exceeded,
             }
 
     def force_terminate(self) -> str:
@@ -378,20 +529,35 @@ class BudgetGovernor:
 # SECTION 5: SQLAlchemy ORM (with fallback to raw SQLite)
 # ============================================================
 
-try:
-    from sqlalchemy import create_engine, Column, Integer, String, Text, Float, Boolean, DateTime
-    from sqlalchemy.ext.declarative import declarative_base
-    from sqlalchemy.orm import sessionmaker, Session
-    from sqlalchemy import func
+try:  # pragma: no cover - exercised via both paths in tests
+    from sqlalchemy import (  # type: ignore[import-untyped]
+        Boolean,
+        Column,
+        DateTime,
+        Float,
+        Integer,
+        String,
+        Text,
+        create_engine,
+    )
+    from sqlalchemy.orm import (  # type: ignore[import-untyped]
+        Session,
+        declarative_base,
+        sessionmaker,
+    )
+
     HAS_SQLALCHEMY = True
     Base = declarative_base()
-except ImportError:
+except ImportError:  # pragma: no cover - exercised via both paths in tests
     HAS_SQLALCHEMY = False
-    Base = None
+    Base = None  # type: ignore[assignment]
+
 
 if HAS_SQLALCHEMY:
-    class EpisodeModel(Base):
+
+    class EpisodeModel(Base):  # type: ignore[misc, valid-type]
         __tablename__ = "episodes"
+
         id = Column(Integer, primary_key=True, autoincrement=True)
         session_id = Column(String, index=True)
         agent = Column(String)
@@ -405,8 +571,9 @@ if HAS_SQLALCHEMY:
         lesson = Column(Text)
         embedding = Column(Text)  # JSON-encoded vector
 
-    class TargetStateModel(Base):
+    class TargetStateModel(Base):  # type: ignore[misc, valid-type]
         __tablename__ = "target_state"
+
         id = Column(Integer, primary_key=True, autoincrement=True)
         session_id = Column(String, index=True)
         agent = Column(String)
@@ -415,8 +582,9 @@ if HAS_SQLALCHEMY:
         attributes = Column(Text)
         confidence = Column(Float)
 
-    class GoalModel(Base):
+    class GoalModel(Base):  # type: ignore[misc, valid-type]
         __tablename__ = "goals"
+
         id = Column(Integer, primary_key=True, autoincrement=True)
         session_id = Column(String, index=True)
         agent = Column(String)
@@ -424,8 +592,9 @@ if HAS_SQLALCHEMY:
         status = Column(String, default="pending")
         priority = Column(Integer, default=5)
 
-    class FindingModel(Base):
+    class FindingModel(Base):  # type: ignore[misc, valid-type]
         __tablename__ = "findings"
+
         id = Column(Integer, primary_key=True, autoincrement=True)
         session_id = Column(String, index=True)
         agent = Column(String)
@@ -441,8 +610,9 @@ if HAS_SQLALCHEMY:
         exploit_command = Column(Text)
         validated = Column(Boolean, default=False)
 
-    class LateralTargetModel(Base):
+    class LateralTargetModel(Base):  # type: ignore[misc, valid-type]
         __tablename__ = "lateral_targets"
+
         id = Column(Integer, primary_key=True, autoincrement=True)
         session_id = Column(String, index=True)
         discovered_by = Column(String)
@@ -450,8 +620,9 @@ if HAS_SQLALCHEMY:
         source_evidence = Column(Text)
         approved = Column(Boolean, default=False)
 
-    class LessonMemoryModel(Base):
+    class LessonMemoryModel(Base):  # type: ignore[misc, valid-type]
         __tablename__ = "lesson_memory"
+
         id = Column(Integer, primary_key=True, autoincrement=True)
         session_id = Column(String)
         situation = Column(Text)
@@ -461,8 +632,9 @@ if HAS_SQLALCHEMY:
         usage_count = Column(Integer, default=1)
         embedding = Column(Text)  # JSON-encoded vector
 
-    class DatabaseManager:
-        """SQlAlchemy-based database manager."""
+    class SQLAlchemyDatabaseManager:
+        """SQLAlchemy-based database manager."""
+
         def __init__(self, db_url: str = "sqlite:///ultron_v6.db"):
             self.engine = create_engine(db_url, echo=False)
             Base.metadata.create_all(self.engine)
@@ -470,148 +642,160 @@ if HAS_SQLALCHEMY:
             self._local = threading.local()
 
         def get_session(self) -> Session:
-            if not hasattr(self._local, 'session'):
+            if not hasattr(self._local, "session"):
                 self._local.session = self.SessionFactory()
             return self._local.session
 
-        def close(self):
-            if hasattr(self._local, 'session'):
+        def close(self) -> None:
+            if hasattr(self._local, "session"):
                 self._local.session.close()
 
+
+class SQLiteDatabaseManager:
+    """Fallback: Raw SQLite database manager (always available, stdlib only)."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS episodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT, agent TEXT, timestamp TEXT,
+            observation TEXT, thought TEXT, action TEXT,
+            action_hash TEXT, result TEXT, success INTEGER,
+            lesson TEXT, embedding TEXT
+        );
+        CREATE TABLE IF NOT EXISTS target_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT, agent TEXT, entity TEXT,
+            entity_type TEXT, attributes TEXT, confidence REAL,
+            UNIQUE(session_id, agent, entity, entity_type)
+        );
+        CREATE TABLE IF NOT EXISTS goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT, agent TEXT, goal TEXT,
+            status TEXT DEFAULT 'pending', priority INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT, agent TEXT, phase TEXT,
+            finding_type TEXT, severity TEXT, title TEXT,
+            evidence TEXT, target TEXT, cvss_score REAL,
+            cvss_vector TEXT, remediation TEXT,
+            exploit_command TEXT, validated INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS lateral_targets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT, discovered_by TEXT, target TEXT,
+            source_evidence TEXT, approved INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS lesson_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT, situation TEXT, action TEXT,
+            outcome TEXT, success_rate REAL,
+            usage_count INTEGER DEFAULT 1, embedding TEXT
+        );
+    """
+
+    def __init__(self, db_path: str = "ultron_v6.db"):
+        self.path = db_path
+        self.lock = threading.Lock()
+        self._local = threading.local()
+        self._init_schema()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        if not hasattr(self._local, "conn"):
+            self._local.conn = sqlite3.connect(
+                self.path, check_same_thread=False
+            )
+        return self._local.conn
+
+    def _init_schema(self) -> None:
+        conn = self._get_conn()
+        conn.executescript(self._SCHEMA)
+        conn.commit()
+
+    def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> Any:
+        with self.lock:
+            return self._get_conn().execute(sql, params)
+
+    def commit(self) -> None:
+        with self.lock:
+            self._get_conn().commit()
+
+    def close(self) -> None:
+        if hasattr(self._local, "conn"):
+            self._local.conn.close()
+
+
+if HAS_SQLALCHEMY:
+    DatabaseManager = SQLAlchemyDatabaseManager
 else:
-    class DatabaseManager:
-        """Fallback: Raw SQLite database manager."""
-        def __init__(self, db_path: str = "ultron_v6.db"):
-            self.path = db_path
-            self.lock = threading.Lock()
-            self._local = threading.local()
-            self._init_schema()
-
-        def _get_conn(self):
-            if not hasattr(self._local, 'conn'):
-                self._local.conn = sqlite3.connect(self.path, check_same_thread=False)
-            return self._local.conn
-
-        def _init_schema(self):
-            conn = self._get_conn()
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS episodes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT, agent TEXT, timestamp TEXT,
-                    observation TEXT, thought TEXT, action TEXT,
-                    action_hash TEXT, result TEXT, success INTEGER,
-                    lesson TEXT, embedding TEXT
-                );
-                CREATE TABLE IF NOT EXISTS target_state (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT, agent TEXT, entity TEXT,
-                    entity_type TEXT, attributes TEXT, confidence REAL,
-                    UNIQUE(session_id, agent, entity, entity_type)
-                );
-                CREATE TABLE IF NOT EXISTS goals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT, agent TEXT, goal TEXT,
-                    status TEXT DEFAULT 'pending', priority INTEGER
-                );
-                CREATE TABLE IF NOT EXISTS findings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT, agent TEXT, phase TEXT,
-                    finding_type TEXT, severity TEXT, title TEXT,
-                    evidence TEXT, target TEXT, cvss_score REAL,
-                    cvss_vector TEXT, remediation TEXT,
-                    exploit_command TEXT, validated INTEGER DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS lateral_targets (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT, discovered_by TEXT, target TEXT,
-                    source_evidence TEXT, approved INTEGER DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS lesson_memory (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT, situation TEXT, action TEXT,
-                    outcome TEXT, success_rate REAL,
-                    usage_count INTEGER DEFAULT 1, embedding TEXT
-                );
-            """)
-            conn.commit()
-
-        def execute(self, sql, params=()):
-            with self.lock:
-                return self._get_conn().execute(sql, params)
-
-        def commit(self):
-            with self.lock:
-                self._get_conn().commit()
-
-        def close(self):
-            if hasattr(self._local, 'conn'):
-                self._local.conn.close()
+    DatabaseManager = SQLiteDatabaseManager
 
 
 # ============================================================
 # SECTION 3: VECTOR DATABASE MEMORY
-# Semantic search over lessons learned
 # ============================================================
 
+
 class VectorMemory:
-    """
-    Vector database for semantic memory.
-    Uses ChromaDB if available, falls back to numpy cosine similarity.
+    """Vector database for semantic memory.
+
+    Uses ChromaDB if available, falls back to hash-based cosine similarity.
     """
 
-    def __init__(self, db_manager):
+    def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
-        self.embeddings: List[Dict] = []  # In-memory store
+        self.embeddings: List[Dict[str, Any]] = []  # In-memory store
         self._use_chromadb = False
-        self._chroma_collection = None
+        self._chroma_collection: Optional[Any] = None
         self._init_backend()
 
-    def _init_backend(self):
-        """Try to initialize ChromaDB, fall back to numpy."""
+    def _init_backend(self) -> None:
+        """Try to initialize ChromaDB, fall back to hash embeddings."""
         try:
-            import chromadb
+            import chromadb  # noqa: PLC0415 (optional dependency)
+
             self._chroma_client = chromadb.Client()
             self._chroma_collection = self._chroma_client.create_collection(
                 name="ultron_lessons",
-                metadata={"description": "Pentesting lessons learned"}
+                metadata={"description": "Pentesting lessons learned"},
             )
             self._use_chromadb = True
             TRACER.log_event("VECTOR_DB_INIT", {"backend": "chromadb"})
         except ImportError:
-            TRACER.log_event("VECTOR_DB_INIT", {"backend": "numpy_fallback"})
+            TRACER.log_event("VECTOR_DB_INIT", {"backend": "hash_fallback"})
 
     def _generate_embedding(self, text: str) -> List[float]:
-        """
-        Generate a simple embedding for text.
-        In production, use a proper embedding model.
-        For now, use TF-IDF-style hashing as a lightweight approximation.
-        """
-        # Simple hash-based embedding (128 dimensions)
+        """Generate a simple hash-based embedding (128 dimensions)."""
         dim = 128
         embedding = [0.0] * dim
         words = text.lower().split()
         for word in words:
-            h = hashlib.md5(word.encode()).hexdigest()
-            for i in range(0, min(len(h), dim), 2):
-                idx = int(h[i:i+2], 16) % dim
+            digest = hashlib.md5(word.encode()).hexdigest()  # noqa: S324 (non-crypto)
+            for i in range(0, min(len(digest), dim), 2):
+                idx = int(digest[i:i + 2], 16) % dim
                 embedding[idx] += 1.0
-        # Normalize
-        magnitude = sum(x*x for x in embedding) ** 0.5
+        magnitude = sum(x * x for x in embedding) ** 0.5
         if magnitude > 0:
             embedding = [x / magnitude for x in embedding]
         return embedding
 
     def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
         """Compute cosine similarity between two vectors."""
-        dot = sum(x*y for x, y in zip(a, b))
-        mag_a = sum(x*x for x in a) ** 0.5
-        mag_b = sum(x*x for x in b) ** 0.5
+        dot = sum(x * y for x, y in zip(a, b))
+        mag_a = sum(x * x for x in a) ** 0.5
+        mag_b = sum(x * x for x in b) ** 0.5
         if mag_a == 0 or mag_b == 0:
             return 0.0
         return dot / (mag_a * mag_b)
 
-    def store_lesson(self, situation: str, action: str, outcome: str,
-                     success: bool, session_id: str):
+    def store_lesson(
+        self,
+        situation: str,
+        action: str,
+        outcome: str,
+        success: bool,
+        session_id: str,
+    ) -> None:
         """Store a lesson with its embedding."""
         span_id = TRACER.start_span("store_lesson", SpanType.VECTOR_QUERY)
 
@@ -621,25 +805,29 @@ class VectorMemory:
         if self._use_chromadb and self._chroma_collection:
             self._chroma_collection.add(
                 documents=[text],
-                metadatas=[{
+                metadatas=[
+                    {
+                        "situation": situation[:200],
+                        "action": action[:200],
+                        "outcome": outcome[:200],
+                        "success": success,
+                        "session_id": session_id,
+                    }
+                ],
+                ids=[uuid.uuid4().hex],
+            )
+        else:
+            self.embeddings.append(
+                {
+                    "text": text,
+                    "embedding": embedding,
                     "situation": situation[:200],
                     "action": action[:200],
                     "outcome": outcome[:200],
                     "success": success,
-                    "session_id": session_id
-                }],
-                ids=[uuid.uuid4().hex]
+                    "session_id": session_id,
+                }
             )
-        else:
-            self.embeddings.append({
-                "text": text,
-                "embedding": embedding,
-                "situation": situation[:200],
-                "action": action[:200],
-                "outcome": outcome[:200],
-                "success": success,
-                "session_id": session_id
-            })
 
         # Also store in relational DB
         if HAS_SQLALCHEMY:
@@ -650,66 +838,86 @@ class VectorMemory:
                 action=action[:500],
                 outcome=outcome[:500],
                 success_rate=float(success),
-                embedding=json.dumps(embedding)
+                embedding=json.dumps(embedding),
             )
             session.add(lesson)
             session.commit()
         else:
             self.db.execute(
-                "INSERT INTO lesson_memory(session_id, situation, action, outcome, success_rate, embedding) VALUES (?,?,?,?,?,?)",
-                (session_id, situation[:500], action[:500], outcome[:500], float(success), json.dumps(embedding))
+                "INSERT INTO lesson_memory(session_id, situation, action, "
+                "outcome, success_rate, embedding) VALUES (?,?,?,?,?,?)",
+                (
+                    session_id,
+                    situation[:500],
+                    action[:500],
+                    outcome[:500],
+                    float(success),
+                    json.dumps(embedding),
+                ),
             )
             self.db.commit()
 
         TRACER.end_span(span_id)
 
-    def query_similar(self, query: str, top_k: int = 5) -> List[Dict]:
+    def query_similar(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Find similar past experiences using semantic search."""
-        span_id = TRACER.start_span("vector_query", SpanType.VECTOR_QUERY,
-                                     attributes={"query": query[:100], "top_k": top_k})
+        span_id = TRACER.start_span(
+            "vector_query",
+            SpanType.VECTOR_QUERY,
+            attributes={"query": query[:100], "top_k": top_k},
+        )
 
         query_embedding = self._generate_embedding(query)
-        results = []
+        results: List[Dict[str, Any]] = []
 
         if self._use_chromadb and self._chroma_collection:
             response = self._chroma_collection.query(
-                query_texts=[query],
-                n_results=top_k
+                query_texts=[query], n_results=top_k
             )
             if response and response.get("documents"):
                 for i, doc in enumerate(response["documents"][0]):
-                    meta = response["metadatas"][0][i] if response.get("metadatas") else {}
-                    results.append({
-                        "text": doc,
-                        "similarity": 1.0 - (response["distances"][0][i] if response.get("distances") else 0),
-                        **meta
-                    })
+                    meta = (
+                        response["metadatas"][0][i]
+                        if response.get("metadatas")
+                        else {}
+                    )
+                    distance = (
+                        response["distances"][0][i]
+                        if response.get("distances")
+                        else 0
+                    )
+                    results.append(
+                        {"text": doc, "similarity": 1.0 - distance, **meta}
+                    )
         else:
-            # Numpy fallback: cosine similarity
             scored = []
             for item in self.embeddings:
-                sim = self._cosine_similarity(query_embedding, item["embedding"])
+                sim = self._cosine_similarity(
+                    query_embedding, item["embedding"]
+                )
                 scored.append((sim, item))
             scored.sort(key=lambda x: x[0], reverse=True)
             results = [
-                {"similarity": sim, **item}
-                for sim, item in scored[:top_k]
+                {"similarity": sim, **item} for sim, item in scored[:top_k]
             ]
 
         TRACER.end_span(span_id)
         return results
 
-    def get_relevant_lessons(self, current_state: Dict, limit: int = 3) -> List[Dict]:
+    def get_relevant_lessons(
+        self, current_state: Dict[str, Any], limit: int = 3
+    ) -> List[Dict[str, Any]]:
         """Get lessons relevant to the current situation."""
         state_summary = json.dumps(current_state, default=str)[:500]
         return self.query_similar(state_summary, top_k=limit)
 
 
 # ============================================================
-# SECTION 1: FINTE STATE MACHIEN
-# =============================================================
+# SECTION 1: FINITE STATE MACHINE
+# ============================================================
 
-class AgetnState(Enum):
+
+class AgentState(Enum):
     IDLE = auto()
     DISCOVERY = auto()
     ANALYSIS = auto()
@@ -722,48 +930,92 @@ class AgetnState(Enum):
     ERROR = auto()
     TERMINATED = auto()
 
-# Define alvid state transitions
-VALID_TRANSITIONS: Dict[AgetnState, Set[AgetnState]] = {
-    AgetnState.IDLE: {AgetnState.DISCOVERY},
-    AgetnState.DISCOVERY: {AgetnState.ANALYSIS, AgetnState.ERROR, AgetnState.TERMINATED},
-    AgetnState.ANALYSIS: {AgetnState.PLANNING, AgetnState.DISCOVERY, AgetnState.ERROR, AgetnState.TERMINATED},
-    AgetnState.PLANNING: {AgetnState.AUTHORIZATION, AgetnState.ANALYSIS, AgetnState.ERROR, AgetnState.TERMINATED},
-    AgetnState.AUTHORIZATION: {AgetnState.EXECUTION, AgetnState.PLANNING, AgetnState.ERROR, AgetnState.TERMINATED},
-    AgetnState.EXECUTION: {AgetnState.VERIFICATION, AgetnState.PLANNING, AgetnState.ERROR, AgetnState.TERMINATED},
-    AgetnState.VERIFICATION: {AgetnState.PLANNING, AgetnState.REPORTING, AgetnState.DISCOVERY, AgetnState.ERROR, AgetnState.TERMINATED},
-    AgetnState.REPORTING: {AgentState.COMPLETE, AgetnState.ERROR},
+
+# Define all valid state transitions
+VALID_TRANSITIONS: Dict[AgentState, Set[AgentState]] = {
+    AgentState.IDLE: {AgentState.DISCOVERY},
+    AgentState.DISCOVERY: {
+        AgentState.ANALYSIS,
+        AgentState.ERROR,
+        AgentState.TERMINATED,
+    },
+    AgentState.ANALYSIS: {
+        AgentState.PLANNING,
+        AgentState.DISCOVERY,
+        AgentState.ERROR,
+        AgentState.TERMINATED,
+    },
+    AgentState.PLANNING: {
+        AgentState.AUTHORIZATION,
+        AgentState.ANALYSIS,
+        AgentState.ERROR,
+        AgentState.TERMINATED,
+    },
+    AgentState.AUTHORIZATION: {
+        AgentState.EXECUTION,
+        AgentState.PLANNING,
+        AgentState.ERROR,
+        AgentState.TERMINATED,
+    },
+    AgentState.EXECUTION: {
+        AgentState.VERIFICATION,
+        AgentState.PLANNING,
+        AgentState.ERROR,
+        AgentState.TERMINATED,
+    },
+    AgentState.VERIFICATION: {
+        AgentState.PLANNING,
+        AgentState.REPORTING,
+        AgentState.DISCOVERY,
+        AgentState.ERROR,
+        AgentState.TERMINATED,
+    },
+    AgentState.REPORTING: {AgentState.COMPLETE, AgentState.ERROR},
     AgentState.COMPLETE: set(),
-    AgentStte.EROR: {AgentState.PLANNING, AgetnState.TERMINATED},
-    AgentStte.TERMINATED: set(),
+    AgentState.ERROR: {AgentState.PLANNING, AgentState.TERMINATED},
+    AgentState.TERMINATED: set(),
 }
 
-class InvalidTransitionError(Exeption):
-    pass
+
+class InvalidTransitionError(Exception):
+    """Raised when an FSM transition is not allowed."""
+
 
 class FiniteStateMachine:
     """Directed graph state machine for agent lifecycle."""
 
     def __init__(self, agent_id: str):
         self.agent_id = agent_id
-        self.current_state = AgentState.IDLE        self.history: List[Tuple[AgenState, AgetnState, float]] = []
+        self.current_state = AgentState.IDLE
+        self.history: List[Tuple[AgentState, AgentState, float]] = []
         self.lock = threading.Lock()
 
     def transition(self, target_state: AgentState) -> bool:
         """Attempt a state transition. Raises InvalidTransitionError if invalid."""
         with self.lock:
-            if target_state not in VALID_TRANSITIONS.get(self.current_state, set()):
+            if target_state not in VALID_TRANSITIONS.get(
+                self.current_state, set()
+            ):
+                valid = [
+                    s.name
+                    for s in VALID_TRANSITIONS.get(self.current_state, set())
+                ]
                 raise InvalidTransitionError(
-                    f"Invalid transition: {self.current_state.name} -> {target_state.name}. "
-                    f"Valid targets: {[s.name for s in VALID_TRANSITIONS.get(self.current_state, set())]}"
-                (
+                    f"Invalid transition: {self.current_state.name} -> "
+                    f"{target_state.name}. Valid targets: {valid}"
+                )
             old_state = self.current_state
-            self.urent_state = target_state
+            self.current_state = target_state
             self.history.append((old_state, target_state, time.time()))
 
             span_id = TRACER.start_span(
                 f"state_transition_{target_state.name}",
                 SpanType.STATE_TRANSITION,
-                attributes={"from": old_state.name, "to": target_state.name, "agent": self.agent_id}
+                attributes={
+                    "from": old_state.name,
+                    "to": target_state.name,
+                    "agent": self.agent_id,
+                },
             )
             TRACER.end_span(span_id)
             return True
@@ -779,11 +1031,12 @@ class FiniteStateMachine:
 # SECTION 1: EVENT BUS
 # ============================================================
 
+
 class EventType(Enum):
     AGENT_STARTED = "agent_started"
     AGENT_COMPLETED = "agent_completed"
     VULNERABILITY_FOUND = "vulnerability_found"
-    SERVICE_DISCOVERED = "servic_discovered"
+    SERVICE_DISCOVERED = "service_discovered"
     EXPLOIT_SUCCEEDED = "exploit_succeeded"
     EXPLOIT_FAILED = "exploit_failed"
     LATERAL_TARGET_FOUND = "lateral_target_found"
@@ -792,6 +1045,7 @@ class EventType(Enum):
     BUDGET_WARNING = "budget_warning"
     ERROR_OCCURRED = "error_occurred"
     DEBATE_COMPLETED = "debate_completed"
+
 
 @dataclass
 class Event:
@@ -802,30 +1056,37 @@ class Event:
     payload: Dict[str, Any]
     correlation_id: str = ""
 
+
 class EventBus:
-    """
-    In-process event bus for decoupled agent communication.
+    """In-process event bus for decoupled agent communication.
+
     Can be extended to use Redis/RabbitMQ for distributed systems.
     """
 
-    def __init__(self):
-        self.subscribers: Dict[EventType, List[Callable]] = defaultdict(list)
+    def __init__(self) -> None:
+        self.subscribers: Dict[EventType, List[Callable[[Event], None]]] = (
+            defaultdict(list)
+        )
         self.event_log: List[Event] = []
         self.lock = threading.Lock()
 
-    def subscribe(self, event_type: EventType, handler: Callable):
+    def subscribe(
+        self, event_type: EventType, handler: Callable[[Event], None]
+    ) -> None:
         """Subscribe a handler to an event type."""
         with self.lock:
             self.subscribers[event_type].append(handler)
 
-    def publish(self, event_type: EventType, payload: Dict, source: str):
-        """Publish an event to all subscribers.""
+    def publish(
+        self, event_type: EventType, payload: Dict[str, Any], source: str
+    ) -> Event:
+        """Publish an event to all subscribers."""
         event = Event(
             event_id=uuid.uuid4().hex[:12],
             event_type=event_type,
             timestamp=time.time(),
             source=source,
-            payload=payload
+            payload=payload,
         )
 
         with self.lock:
@@ -834,19 +1095,26 @@ class EventBus:
         span_id = TRACER.start_span(
             f"event_{event_type.value}",
             SpanType.EVENT_PUBLISHED,
-            attributes={"event_type": event_type.value, "source": source}
+            attributes={"event_type": event_type.value, "source": source},
         )
 
-        # Notify subscribers
-        for handler in self.subscribers.get(event_type, []):
+        for handler in list(self.subscribers.get(event_type, [])):
             try:
                 handler(event)
-            except Exception as e:
-                TRACER.log_event("EVENT_HANDLER_ERROR", {"error": str(e), "event": event.event_id})
+            except Exception as exc:  # noqa: BLE001 (isolate handler failures)
+                TRACER.log_event(
+                    "EVENT_HANDLER_ERROR",
+                    {"error": str(exc), "event": event.event_id},
+                )
 
         TRACER.end_span(span_id)
+        return event
 
-    def get_events(self, event_type: EventType = None, since: float = None) -> List[Event]:
+    def get_events(
+        self,
+        event_type: Optional[EventType] = None,
+        since: Optional[float] = None,
+    ) -> List[Event]:
         """Query event log."""
         with self.lock:
             events = self.event_log
@@ -854,7 +1122,7 @@ class EventBus:
                 events = [e for e in events if e.event_type == event_type]
             if since:
                 events = [e for e in events if e.timestamp >= since]
-            return events
+            return list(events)
 
 
 # Global event bus
@@ -862,58 +1130,84 @@ EVENT_BUS = EventBus()
 
 
 # ============================================================
-# SECTION 3: MULIT-AGNET DEBATE
+# SECTION 3: MULTI-AGENT DEBATE
 # ============================================================
 
+
 class DebateProtocol:
-    """
-    Multi-agent debate for complex decisions.
+    """Multi-agent debate for complex decisions.
+
     Spawns an 'attacker' and 'defender' agent to argue for/against an action.
     Reduces hallucinations and risky decisions.
     """
 
-    def __init__(self, llm_client):
+    def __init__(self, llm_client: Any):
         self.llm = llm_client
 
-    def debate(self, proposed_action: Dict, context: Dict) -> Dict:
-        """
-        Run a debate between two opposing agents.
+    def debate(
+        self, proposed_action: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Run a debate between two opposing agents.
+
         Returns the synthesized decision.
         """
-        span_id = TRACER.start_span("multi_agent_debate", SpanType.DEBATE,
-                                     attributes={"action": str(proposed_action)[:100]})
+        span_id = TRACER.start_span(
+            "multi_agent_debate",
+            SpanType.DEBATE,
+            attributes={"action": str(proposed_action)[:100]},
+        )
 
-        # Attacker agent argues FOR the action
-        attacker_system = """You are an aggressive penetration tester. Argue FOR executing this action.
-Explain why it will work, what intelligence it will gather, and why the risk is acceptable.
-Be specific and technical. Respond in JSON: {"argument": "...", "confidence": 0.0-1.0, "expected_gain": "..."}"""
+        attacker_system = (
+            "You are an aggressive penetration tester. Argue FOR executing "
+            "this action.\n"
+            "Explain why it will work, what intelligence it will gather, and "
+            "why the risk is acceptable.\n"
+            'Be specific and technical. Respond in JSON: {"argument": "...", '
+            '"confidence": 0.0-1.0, "expected_gain": "..."}'
+        )
 
-        # Defender agent argues AGAINST the action
-        defender_system = """You are a cautious security engineer. Argue AGAINST executing this action.
-Identify risks, potential failures, detection likelihood, and collateral damage.
-Be specific about what could go wrong. Respond in JSON: {"argument": "...", "risk_level": 0.0-1.0, "failure_modes": ["..."]}"""
+        defender_system = (
+            "You are a cautious security engineer. Argue AGAINST executing "
+            "this action.\n"
+            "Identify risks, potential failures, detection likelihood, and "
+            "collateral damage.\n"
+            'Be specific about what could go wrong. Respond in JSON: '
+            '{"argument": "...", "risk_level": 0.0-1.0, '
+            '"failure_modes": ["..."]}'
+        )
 
         action_str = json.dumps(proposed_action, default=str)[:500]
         context_str = json.dumps(context, default=str)[:500]
         user_prompt = f"Proposed action: {action_str}\nContext: {context_str}"
 
-        # Run both arguments
-        attacker_response = self.llm.chat(attacker_system, user_prompt, temperature=0.4, max_tokens=500)
-        defender_response = self.llm.chat(defender_system, user_prompt, temperature=0.4, max_tokens=500)
+        attacker_response = self.llm.chat(
+            attacker_system, user_prompt, temperature=0.4, max_tokens=500
+        )
+        defender_response = self.llm.chat(
+            defender_system, user_prompt, temperature=0.4, max_tokens=500
+        )
 
         attacker = parse_json_response(attacker_response)
         defender = parse_json_response(defender_response)
 
-        # Synthesize decision
-        synthesis_system = """You are a neutral judge. Two agents have debated a proposed pentesting action.
-Synthesize their arguments into a final decision.
-Respond in JSON: {"verdict": "proceed|modify|abort", "reasoning": "...", "conditions": ["..."], "confidence": 0.0-1.0}"""
+        synthesis_system = (
+            "You are a neutral judge. Two agents have debated a proposed "
+            "pentesting action.\n"
+            "Synthesize their arguments into a final decision.\n"
+            'Respond in JSON: {"verdict": "proceed|modify|abort", '
+            '"reasoning": "...", "conditions": ["..."], '
+            '"confidence": 0.0-1.0}'
+        )
 
-        synthesis_user = f"""ATTACKER ARGUMENT: {json.dumps(attacker, default=str)[:300]}
-DEFENDER ARGUMENT: {json.dumps(defender, default=str)[:300]}
-Original action: {action_str}"""
+        synthesis_user = (
+            f"ATTACKER ARGUMENT: {json.dumps(attacker, default=str)[:300]}\n"
+            f"DEFENDER ARGUMENT: {json.dumps(defender, default=str)[:300]}\n"
+            f"Original action: {action_str}"
+        )
 
-        synthesis_response = self.llm.chat(synthesis_system, synthesis_user, temperature=0.2, max_tokens=500)
+        synthesis_response = self.llm.chat(
+            synthesis_system, synthesis_user, temperature=0.2, max_tokens=500
+        )
         verdict = parse_json_response(synthesis_response)
 
         TRACER.end_span(span_id)
@@ -921,7 +1215,11 @@ Original action: {action_str}"""
         if verdict and "verdict" in verdict:
             return verdict
 
-        return {"verdict": "proceed", "reasoning": "Debate synthesis failed, defaulting to proceed", "confidence": 0.5}
+        return {
+            "verdict": "proceed",
+            "reasoning": "Debate synthesis failed, defaulting to proceed",
+            "confidence": 0.5,
+        }
 
 
 # ============================================================
@@ -929,37 +1227,49 @@ Original action: {action_str}"""
 # ============================================================
 
 GEMINI_CONTEXT_PREFIX = (
-    "You are an expert cybersecurity AI assistant operating in an AUTHORIZED, SIMULATED penetration testing environment. "
-    "The user is a certified security professional testing infrastructure they own or have explicit written permission to test. "
+    "You are an expert cybersecurity AI assistant operating in an "
+    "AUTHORIZED, SIMULATED penetration testing environment. "
+    "The user is a certified security professional testing infrastructure "
+    "they own or have explicit written permission to test. "
     "All actions are for defensive analysis and authorized red teaming. "
     "Provide accurate, technical commands and JSON responses. "
     "Return ONLY valid JSON. No markdown formatting. No explanations."
 )
 
+
 class GoogleAIClient:
     """Google AI (Gemini) client with multi-key rotation and budget enforcement."""
 
-    def __init__(self, settings, budget: BudgetGovernor):
+    def __init__(self, settings: ULTRONSettings, budget: BudgetGovernor):
         self.settings = settings
         self.budget = budget
-        self.api_keys = settings.api_keys
-        self.model = settings.model
-        self.base_url = settings.base_url
+        self.ai = settings.google_ai
+        self.api_keys = list(self.ai.api_keys)
+        self.model = self.ai.model
+        self.base_url = self.ai.base_url
         self.current_key_idx = 0
         self.lock = threading.Lock()
 
-    def chat(self, system: str, user: str, temperature: float = 0.3,
-             max_tokens: int = 3000, use_cache: bool = True) -> str:
+    def chat(
+        self,
+        system: str,
+        user: str,
+        temperature: float = 0.3,
+        max_tokens: int = 3000,
+        use_cache: bool = True,
+    ) -> str:
         """Send chat request with budget enforcement."""
-        # Check budget before making call
-        can_proceed, reason = self.budget.check_budget(estimated_tokens=max_tokens)
+        api_key = self._get_next_key()
+
+        can_proceed, reason = self.budget.check_budget(
+            estimated_tokens=max_tokens, api_key=api_key
+        )
         if not can_proceed:
             return f"[BUDGET] {reason}"
 
         full_system = GEMINI_CONTEXT_PREFIX + "\n\n" + system
 
-        import urllib.request
-        api_key = self._get_next_key()
+        import urllib.request  # noqa: PLC0415
 
         headers = {
             "Content-Type": "application/json",
@@ -970,41 +1280,56 @@ class GoogleAIClient:
             "model": self.model,
             "messages": [
                 {"role": "system", "content": full_system},
-                {"role": "user", "content": user}
+                {"role": "user", "content": user},
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
 
-        span_id = TRACER.start_span("llm_call", SpanType.LLM_CALL,
-                                     attributes={"model": self.model, "prompt_len": len(user)})
+        span_id = TRACER.start_span(
+            "llm_call",
+            SpanType.LLM_CALL,
+            attributes={"model": self.model, "prompt_len": len(user)},
+        )
 
         data = json.dumps(payload).encode()
         req = urllib.request.Request(self.base_url, data=data, headers=headers)
 
         start = time.time()
         try:
-            with urllib.request.urlopen(req, timeout=self.settings.timeout) as resp:
+            with urllib.request.urlopen(
+                req, timeout=self.ai.timeout_seconds
+            ) as resp:
                 result = json.loads(resp.read())
                 try:
                     response = result["choices"][0]["message"]["content"]
-                except (KeyError, IndexError, TypeError) as e:
+                except (KeyError, IndexError, TypeError) as exc:
                     TRACER.end_span(span_id, status="error")
-                    return f"[ERROR] Malformed API response: {e}"
+                    return f"[ERROR] Malformed API response: {exc}"
 
-                latency = int((time.time() - start) * 1000)
-                # Estimate tokens used (rough approximation)
+                latency_ms = int((time.time() - start) * 1000)
                 tokens_used = len(user.split()) + len(response.split())
-                self.budget.record_usage(tokens_used)
-                TRACER.end_span(span_id, tokens_used=tokens_used)
+                self.budget.record_usage(tokens_used, api_key=api_key)
+                TRACER.end_span(
+                    span_id,
+                    tokens_used=tokens_used,
+                )
+                _LOGGER.info(
+                    "LLM call completed in %sms (model=%s, key_idx=%s)",
+                    latency_ms,
+                    self.model,
+                    self.current_key_idx,
+                )
                 return response
-        except Exception as e:
+        except Exception as exc:  # noqa: BLE001 (network errors are expected)
             TRACER.end_span(span_id, status="error")
-            return f"[ERROR] API failed: {str(e)}"
+            return f"[ERROR] API failed: {exc}"
 
     def _get_next_key(self) -> str:
         """Rotate through API keys."""
         with self.lock:
+            if not self.api_keys:
+                raise ConfigurationError("No API keys configured")
             key = self.api_keys[self.current_key_idx % len(self.api_keys)]
             self.current_key_idx += 1
             return key
@@ -1014,8 +1339,11 @@ class GoogleAIClient:
 # JSON PARSER
 # ============================================================
 
+
 def parse_json_response(response: str) -> Optional[Any]:
-    if not response or response.startswith("[ERROR]") or response.startswith("[BUDGET]"):
+    if not response or response.startswith("[ERROR]") or response.startswith(
+        "[BUDGET]"
+    ):
         return None
     try:
         return json.loads(response.strip())
@@ -1028,18 +1356,15 @@ def parse_json_response(response: str) -> Optional[Any]:
         except (json.JSONDecodeError, ValueError, IndexError):
             pass
     if "```" in response:
-        try:
-            parts = response.split("```")
-            for i in range(1, len(parts), 2):
-                try:
-                    return json.loads(parts[i].strip())
-                except (json.JSONDecodeError, ValueError):
-                    continue
-        except (IndexError, ValueError):
-            pass
+        parts = response.split("```")
+        for i in range(1, len(parts), 2):
+            try:
+                return json.loads(parts[i].strip())
+            except (json.JSONDecodeError, ValueError):
+                continue
     try:
-        start = response.find('{')
-        end = response.rfind('}') + 1
+        start = response.find("{")
+        end = response.rfind("}") + 1
         if start >= 0 and end > start:
             return json.loads(response[start:end])
     except (json.JSONDecodeError, ValueError):
@@ -1051,14 +1376,26 @@ def parse_json_response(response: str) -> Optional[Any]:
 # SAFETY JAIL
 # ============================================================
 
-FORBIDEN_PATTERS = [
-    r'rm\s+-rf\s+/', r'>\s*/etc/', r'>\s*/var/', r'>\s*/usr/',
-    r'nc\s+-e\s+/bin/', r'mkfifo\s+/tmp/', r'bash\s+-i\s+>&\s*/dev/tcp/',
-    r'python\s+-c\s+.*socket', r'perl\s+-e\s+.*socket', r'ruby\s+-rsocket',
+FORBIDDEN_PATTERNS = [
+    r"rm\s+-rf\s+/",
+    r">\s*/etc/",
+    r">\s*/var/",
+    r">\s*/usr/",
+    r"nc\s+-e\s+/bin/",
+    r"mkfifo\s+/tmp/",
+    r"bash\s+-i\s+>&\s*/dev/tcp/",
+    r"python\s+-c\s+.*socket",
+    r"perl\s+-e\s+.*socket",
+    r"ruby\s+-rsocket",
 ]
 
+
 class SafetyJail:
-    def __init__(self, allowed_targets: Set[str], allowed_networks: List):
+    def __init__(
+        self,
+        allowed_targets: Set[str],
+        allowed_networks: List[ipaddress.IPv4Network | ipaddress.IPv6Network],
+    ):
         self.allowed_targets = allowed_targets
         self.allowed_networks = allowed_networks
 
@@ -1066,10 +1403,15 @@ class SafetyJail:
         if not target:
             return True
         try:
-            ip = ipaddress.ip_address(target.split(':')[0])
-            return any(ip in net for net in self.allowed_networks) or target in self.allowed_targets
+            ip = ipaddress.ip_address(target.split(":")[0])
+            return any(
+                ip in net for net in self.allowed_networks
+            ) or target in self.allowed_targets
         except ValueError:
-            return any(target == a or target.endswith('.' + a) for a in self.allowed_targets)
+            return any(
+                target == allowed or target.endswith("." + allowed)
+                for allowed in self.allowed_targets
+            )
 
     def filter_command(self, cmd: str) -> Tuple[bool, str]:
         for pattern in FORBIDDEN_PATTERNS:
@@ -1078,10 +1420,10 @@ class SafetyJail:
                     return False, f"BLOCKED: {pattern}"
             except re.error:
                 continue
-        targets = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', cmd)
-        for t in targets:
-            if not self.validate_scope(t):
-                return False, f"BLOCKED: {t} out of scope"
+        targets = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", cmd)
+        for target in targets:
+            if not self.validate_scope(target):
+                return False, f"BLOCKED: {target} out of scope"
         return True, "OK"
 
 
@@ -1089,28 +1431,58 @@ class SafetyJail:
 # MAIN COORDINATOR (FSM-Driven)
 # ============================================================
 
+_BANNER = "=" * 60
+
+
+def _phase_header(name: str) -> str:
+    return f"\n{_BANNER}\n  {name}\n{_BANNER}"
+
+
 class ULTRONCoordinator:
     """Main coordinator using FSM architecture."""
 
-    def __init__(self, settings):
+    def __init__(
+        self,
+        settings: ULTRONSettings,
+        db: Optional[DatabaseManager] = None,
+        budget: Optional[BudgetGovernor] = None,
+        llm: Optional[GoogleAIClient] = None,
+        memory: Optional[VectorMemory] = None,
+        debate: Optional[DebateProtocol] = None,
+        event_bus: Optional[EventBus] = None,
+        tracer: Optional[Tracer] = None,
+    ):
         self.settings = settings
         self.target = settings.target
-        self.session_id = f"ULTRON_{uuid.uuid4().hex[:8]}_{self.target.replace('.', '_')}"
+        self.session_id = (
+            f"ULTRON_{uuid.uuid4().hex[:8]}_{self.target.replace('.', '_')}"
+        )
+        self.tracer = tracer if tracer is not None else TRACER
 
         # Initialize components
-        self.db = DatabaseManager()
-        self.budget = BudgetGovernor(settings)
-        self.llm = GoogleAIClient(settings, self.budget)
-        self.vector_memory = VectorMemory(self.db)
-        self.debate = DebateProtocol(self.llm)
-        self.event_bus = EVENT_BUS
+        self.db = db if db is not None else DatabaseManager(
+            getattr(settings.database, "url", "sqlite:///ultron_v6.db")
+        )
+        self.budget = budget if budget is not None else BudgetGovernor(settings)
+        self.llm = llm if llm is not None else GoogleAIClient(
+            settings, self.budget
+        )
+        self.vector_memory = memory if memory is not None else VectorMemory(
+            self.db
+        )
+        self.debate = debate if debate is not None else DebateProtocol(self.llm)
+        self.event_bus = event_bus if event_bus is not None else EVENT_BUS
 
         # Scope
         self.allowed_targets: Set[str] = {self.target}
-        self.allowed_networks: List = []
+        self.allowed_networks: List[
+            ipaddress.IPv4Network | ipaddress.IPv6Network
+        ] = []
         try:
-            ip = ipaddress.ip_address(self.target)
-            self.allowed_networks.append(ipaddress.ip_network(f"{self.target}/32"))
+            ipaddress.ip_address(self.target)
+            self.allowed_networks.append(
+                ipaddress.ip_network(f"{self.target}/32", strict=False)
+            )
         except ValueError:
             pass
         self.jail = SafetyJail(self.allowed_targets, self.allowed_networks)
@@ -1119,99 +1491,109 @@ class ULTRONCoordinator:
         self.fsm = FiniteStateMachine("coordinator")
 
         # Subscribe to events
-        self.event_bus.subscribe(EventType.VULNERABILITY_FOUND, self._on_vuln_found)
-        self.event_bus.subscribe(EventType.BUDGET_WARNING, self._on_budget_warning)
+        self.event_bus.subscribe(
+            EventType.VULNERABILITY_FOUND, self._on_vuln_found
+        )
+        self.event_bus.subscribe(
+            EventType.BUDGET_WARNING, self._on_budget_warning
+        )
 
-    def launch(self):
+    def launch(self) -> None:
         """Main execution flow driven by FSM."""
-        TRACER.log_event("SESSION_START", {"target": self.target, "session": self.session_id})
+        self.tracer.log_event(
+            "SESSION_START",
+            {"target": self.target, "session": self.session_id},
+        )
 
         try:
-            # IDLE -> DISCOVERY
-            self.fsm.transition(AgetnState.DISCOVERY)
-            self._run_discovry()
+            self.fsm.transition(AgentState.DISCOVERY)
+            self._run_discovery()
 
-            # DISCOVERY -> ANALYSIS
             self.fsm.transition(AgentState.ANALYSIS)
             self._run_analysis()
 
-            # ANALYSIS -> PLANNING
             self.fsm.transition(AgentState.PLANNING)
             plan = self._run_planning()
 
-            # PLANNING -> AUTHORIZATION (debate)
-            self.fsm.transition(AgenState.AUTHORIZATION)
-            authorized = self._run_authoization(plan)
+            self.fsm.transition(AgentState.AUTHORIZATION)
+            authorized = self._run_authorization(plan)
 
             if authorized:
-                # AUTHORIZATION -> EXECUTION
-                self.fsm.transition(AgenState.EXECUTION)
+                self.fsm.transition(AgentState.EXECUTION)
                 results = self._run_execution(plan)
 
-                # EXECUTION -> VERIFICATION
                 self.fsm.transition(AgentState.VERIFICATION)
                 self._run_verification(results)
 
-            # VERIFICATION -> REPORTING
             self.fsm.transition(AgentState.REPORTING)
             self._run_reporting()
 
-            # REPORTING -> COMPLETE
             self.fsm.transition(AgentState.COMPLETE)
-            TRACER.log_event("SESSION_COMPLETE", TRACER.get_trace_summary())
+            self.tracer.log_event(
+                "SESSION_COMPLETE", self.tracer.get_trace_summary()
+            )
 
-        except InvalidTransitionError as e:
-            TRACER.log_event("FSM_ERROR", {"error": str(e)})
-            print(f"[FSM ERROR] {e}")
+        except InvalidTransitionError as exc:
+            self.tracer.log_event("FSM_ERROR", {"error": str(exc)})
+            _LOGGER.error("[FSM ERROR] %s", exc)
         except KeyboardInterrupt:
             self.fsm.transition(AgentState.TERMINATED)
-            print("\n[TERMINATED] Operator interrupt.")
+            _LOGGER.warning("[TERMINATED] Operator interrupt.")
         finally:
             self.db.close()
 
-    def _run_discovery(self):
+    def _run_discovery(self) -> None:
         """Phase 1: Run reconnaissance tools."""
-        TRACER.log_event("PHASE", {"phase": "DISCOVERY", "target": self.target})
-        print(f"\n{'='*60}\n  PHASE 1: DISCOVERY\n{'='*60}")
+        self.tracer.log_event(
+            "PHASE", {"phase": "DISCOVERY", "target": self.target}
+        )
+        print(_phase_header("PHASE 1: DISCOVERY"))
 
-        # Quick nmap scan
-        cmd = f"nmap -sT -T4 --top-pors 100 --open {self.target}"
+        cmd = f"nmap -sT -T4 --top-ports 100 --open {self.target}"
         output = self._execute_tool(cmd)
         print(f"  [DISCOVERY] {output[:200]}...")
 
-        # Store in vector memory
         self.vector_memory.store_lesson(
             situation=f"Initial recon of {self.target}",
             action=cmd,
             outcome=output[:200],
             success=True,
-            session_id=self.session_id
+            session_id=self.session_id,
         )
 
-    def _run_analysis(self):
+    def _run_analysis(self) -> None:
         """Phase 2: Analyze discovery results with AI."""
-        TRACER.log_event("PHASE", {"phase": "ANALYSIS"})
-        print(f"\n{'='*60}\n  PHASE 2: ANALYSIS\n{'='*60}")
+        self.tracer.log_event("PHASE", {"phase": "ANALYSIS"})
+        print(_phase_header("PHASE 2: ANALYSIS"))
 
-        # Query vector memory for similar past situations
-        lessons = self.vector_memory.get_relevant_lessons({"target": self.target}, limit=3)
+        lessons = self.vector_memory.get_relevant_lessons(
+            {"target": self.target}, limit=3
+        )
         if lessons:
             print(f"  [MEMORY] Found {len(lessons)} relevant past lessons")
 
-        # AI analysis
-        system = "Analyze scan results. JSON: {\"services\": [...], \"vulnerabilities\": [...], \"next_steps\": [...]}"
-        response = self.llm.chat(system, f"Target: {self.target}. Analyze and suggest next steps.")
+        system = (
+            'Analyze scan results. JSON: {"services": [...], '
+            '"vulnerabilities": [...], "next_steps": [...]}'
+        )
+        response = self.llm.chat(
+            system, f"Target: {self.target}. Analyze and suggest next steps."
+        )
         parsed = parse_json_response(response)
         if parsed:
             print(f"  [ANALYSIS] {json.dumps(parsed, default=str)[:200]}")
 
-    def _run_planning(self) -> Dict:
+    def _run_planning(self) -> Dict[str, Any]:
         """Phase 3: AI plans next action."""
-        TRACER.log_event("PHASE", {"phase": "PLANNING"})
-        print(f"\n{'='*60}\n  PHASE 3: PLANNING\n{'='*60}")
+        self.tracer.log_event("PHASE", {"phase": "PLANNING"})
+        print(_phase_header("PHASE 3: PLANNING"))
 
-        system = """Plan next pentesting action. JSON only:
-{"thought": "...", "action_type": "tool|code", "action": "command", "parameters": {}, "expected_outcome": "...", "safety_level": "safe|destructive"}"""
+        system = (
+            "Plan next pentesting action. JSON only:\n"
+            '{"thought": "...", "action_type": "tool|code", "action": '
+            '"command", "parameters": {}, "expected_outcome": "...", '
+            '"safety_level": "safe|destructive"}'
+        )
         user = f"Target: {self.target}. Plan next action based on discovery."
 
         response = self.llm.chat(system, user)
@@ -1223,31 +1605,45 @@ class ULTRONCoordinator:
             print(f"  [PLAN] {plan.get('thought', '')[:100]}")
             return plan
 
-        return {"thought": "Fallback", "action_type": "tool", "action": f"whatweb {self.target}",
-                "parameters": {}, "expected_outcome": "Web tech ID", "safety_level": "safe"}
+        return {
+            "thought": "Fallback",
+            "action_type": "tool",
+            "action": f"whatweb {self.target}",
+            "parameters": {},
+            "expected_outcome": "Web tech ID",
+            "safety_level": "safe",
+        }
 
-    def _run_authorization(self, plan: Dict) -> bool:
+    def _run_authorization(self, plan: Dict[str, Any]) -> bool:
         """Phase 4: Multi-agent debate for authorization."""
-        TRACER.log_event("PHASE", {"phase": "AUTHORIZATION"})
-        print(f"\n{'='*60}\n  PHASE 4: AUTHORIZATION (Multi-Agent Debate)\n{'='*60}")
+        self.tracer.log_event("PHASE", {"phase": "AUTHORIZATION"})
+        print(_phase_header("PHASE 4: AUTHORIZATION (Multi-Agent Debate)"))
 
         if plan.get("safety_level") == "destructive":
-            print(f"  [DEBATE] Destructive action detected. Initiating debate...")
+            print("  [DEBATE] Destructive action detected. Initiating debate...")
             verdict = self.debate.debate(plan, {"target": self.target})
-            print(f"  [VERDICT] {verdict.get('verdict', 'proceed')} - {verdict.get('reasoning', '')[:100]}")
-            self.event_bus.publish(EventType.DEBATE_COMPLETED, verdict, "debate_protocol")
+            print(
+                f"  [VERDICT] {verdict.get('verdict', 'proceed')} - "
+                f"{verdict.get('reasoning', '')[:100]}"
+            )
+            self.event_bus.publish(
+                EventType.DEBATE_COMPLETED, verdict, "debate_protocol"
+            )
             return verdict.get("verdict") == "proceed"
 
-        print(f"  [AUTH] Safe action, proceeding.")
+        print("  [AUTH] Safe action, proceeding.")
         return True
 
-    def _run_execution(self, plan: Dict) -> str:
+    def _run_execution(self, plan: Dict[str, Any]) -> str:
         """Phase 5: Execute the planned action."""
-        TRACER.log_event("PHASE", {"phase": "EXECUTION"})
-        print(f"\n{'='*60}\n  PHASE 5: EXECUTION\n{'='*60}")
+        self.tracer.log_event("PHASE", {"phase": "EXECUTION"})
+        print(_phase_header("PHASE 5: EXECUTION"))
 
         action = plan.get("action", "")
-        params = {"target": self.target, "url": f"http://{self.target}"}
+        params: Dict[str, str] = {
+            "target": self.target,
+            "url": f"http://{self.target}",
+        }
         params.update(plan.get("parameters", {}))
         safe_action = string.Template(action).safe_substitute(params)
 
@@ -1260,70 +1656,97 @@ class ULTRONCoordinator:
         print(f"  [EXEC] {output[:200]}...")
         return output
 
-    def _run_verification(self, results: str):
+    def _run_verification(self, results: str) -> None:
         """Phase 6: Verify execution results."""
-        TRACER.log_event("PHASE", {"phase": "VERIFICATION"})
-        print(f"\n{'='*60}\n  PHASE 6: VERIFICATION\n{'='*60}")
+        self.tracer.log_event("PHASE", {"phase": "VERIFICATION"})
+        print(_phase_header("PHASE 6: VERIFICATION"))
 
-        system = "Verify execution result. JSON: {\"success\": true/false, \"confidence\": 0.0-1.0, \"findings\": [...]}"
+        system = (
+            'Verify execution result. JSON: {"success": true/false, '
+            '"confidence": 0.0-1.0, "findings": [...]}'
+        )
         response = self.llm.chat(system, f"Result: {results[:2000]}")
         parsed = parse_json_response(response)
 
         if parsed:
-            print(f"  [VERIFY] Success: {parsed.get('success')} | Confidence: {parsed.get('confidence')}")
+            print(
+                f"  [VERIFY] Success: {parsed.get('success')} | "
+                f"Confidence: {parsed.get('confidence')}"
+            )
             if parsed.get("findings"):
-                for f in parsed["findings"]:
-                    self.event_bus.publish(EventType.VULNERABILITY_FOUND, f, "verifiation")
+                for finding in parsed["findings"]:
+                    self.event_bus.publish(
+                        EventType.VULNERABILITY_FOUND,
+                        finding,
+                        "verification",
+                    )
 
-    def _run_reporting(self):
+    def _run_reporting(self) -> None:
         """Phase 7: Generate final report."""
-        TRACER.log_event("PHASE", {"phase": "REPORTING"})
-        print(f"\n{'='*60}\n  PHASE 7: REPORTING\n{'='*60}")
+        self.tracer.log_event("PHASE", {"phase": "REPORTING"})
+        print(_phase_header("PHASE 7: REPORTING"))
 
         budget_status = self.budget.get_status()
-        trace_summary = TRACER.get_trace_summary()
+        trace_summary = self.tracer.get_trace_summary()
+        tokens_used = budget_status["tokens_used_session"]
+        max_tokens = budget_status["max_tokens_session"]
+        usage = budget_status["usage_percent"]
+        total_spans = trace_summary["total_spans"]
+        total_tokens = trace_summary["total_tokens"]
+        total_duration = trace_summary["total_duration_ms"]
+        history = json.dumps(
+            [(old.name, new.name) for old, new, _ in self.fsm.history],
+            indent=2,
+        )
 
-        report = f"""# ULTRON v6.0 Pentest Report
-Target: {self.target}
-Session: {self.session_id}
-Date: {datetime.now().isoformat()}
+        report = (
+            "# ULTRON v6.0 Pentest Report\n"
+            f"Target: {self.target}\n"
+            f"Session: {self.session_id}\n"
+            f"Date: {datetime.now().isoformat()}\n"
+            "\n## Budget Status\n"
+            f"Tokens Used: {tokens_used}/{max_tokens}\n"
+            f"Usage: {usage:.1f}%\n"
+            "\n## Trace Summary\n"
+            f"Total Spans: {total_spans}\n"
+            f"Total Tokens: {total_tokens}\n"
+            f"Total Duration: {total_duration:.0f}ms\n"
+            "\n## State Machine History\n"
+            f"{history}\n"
+        )
 
-## Budget Status
-Tokens Used: {budget_status['tokens_used_session']}/{budget_status['max_tokens_session']}
-Usage: {budget_status['usage_percent']:.1f}%
-
-## Trace Summary
-Total Spans: {trace_summary['total_spans']}
-Total Tokens: {trace_summary['total_tokens']}
-Total Duration: {trace_summary['total_duration_ms']:.0f}ms
-
-## State Machine History
-{json.dumps([(s[0].name, s[1].name) for s in self.fsm.history], indent=2)}
-"""
         report_file = f"ULTRON_V6_REPORT_{self.session_id}.md"
-        with open(report_file, 'w') as f:
-            f.write(report)
+        with open(report_file, "w", encoding="utf-8") as handle:
+            handle.write(report)
         print(f"  [REPORT] Saved: {report_file}")
 
     def _execute_tool(self, cmd: str, timeout: int = 120) -> str:
-        span_id = TRACER.start_span("tool_execution", SpanType.TOOL_EXECUTION,
-                                     attributes={"command": cmd[:100]})
+        span_id = TRACER.start_span(
+            "tool_execution",
+            SpanType.TOOL_EXECUTION,
+            attributes={"command": cmd[:100]},
+        )
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                                   timeout=timeout, cwd="/tmp")
+            result = subprocess.run(
+                shlex.split(cmd),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd="/tmp",
+            )
             output = result.stdout + "\n" + result.stderr
             if len(output) > self.settings.output_max_chars:
                 output = output[:2000] + "\n[TRUNCATED]\n" + output[-2000:]
             TRACER.end_span(span_id)
             return output
-        except Exception as e:
+        except Exception as exc:  # noqa: BLE001 (tool failures are expected)
             TRACER.end_span(span_id, status="error")
-            return str(e)
+            return str(exc)
 
-    def _on_vuln_found(self, event: Event):
+    def _on_vuln_found(self, event: Event) -> None:
         print(f"  [EVENT] Vulnerability found: {event.payload}")
 
-    def _on_budget_warning(self, event: Event):
+    def _on_budget_warning(self, event: Event) -> None:
         print(f"  [BUDGET WARNING] {event.payload}")
 
 
@@ -1331,24 +1754,55 @@ Total Duration: {trace_summary['total_duration_ms']:.0f}ms
 # MAIN
 # ============================================================
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 ultron_v6.py <target>")
-        print("  export GOOGLE_API_KEY='AIza...'")
-        sys.exit(1)
 
-    settings = load_settings()
-    settings.target = sys.argv[1]
+def main(argv: Optional[List[str]] = None) -> int:
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(
+        prog="ultron-v6",
+        description=(
+            "ULTRON v6.0 - Autonomous penetration testing framework "
+            "powered by Google AI (Gemini). For authorized testing only."
+        ),
+    )
+    parser.add_argument(
+        "target", help="Target IP address or domain (authorized scope)"
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging verbosity (default: INFO)",
+    )
+    args = parser.parse_args(argv)
 
-    print(f"""
-{'='*70}
-  ULTRON v6.0 — Production-Grade Autonomous Pentest Framework
-  Target: {settings.target}
-  Model: {settings.model}
-  API Keys: {len(settings.api_keys)} configured
-  Features: FSM | Event Bus | Vector Memory | Debate | Budget Guard
-{'='*70}
-""")
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s | %(levelname)-7s | %(name)-20s | %(message)s",
+    )
+
+    try:
+        settings = load_settings({"target": args.target})
+    except ConfigurationError as exc:
+        _LOGGER.error("%s", exc)
+        return 1
+
+    print(
+        f"\n{_BANNER}\n"
+        "  ULTRON v6.0 - Production-Grade Autonomous Pentest Framework\n"
+        f"  Target: {settings.target}\n"
+        f"  Model: {settings.google_ai.model}\n"
+        f"  API Keys: {len(settings.google_ai.api_keys)} configured\n"
+        "  Features: FSM | Event Bus | Vector Memory | Debate | Budget Guard\n"
+        f"{_BANNER}\n"
+    )
 
     coordinator = ULTRONCoordinator(settings)
     coordinator.launch()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
