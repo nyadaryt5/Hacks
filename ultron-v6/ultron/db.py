@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any
 
 try:  # pragma: no cover - exercised via both paths in tests
-    from sqlalchemy import (  # type: ignore[import-untyped]
+    from sqlalchemy import (
         Boolean,
         Column,
         DateTime,
@@ -25,8 +25,7 @@ try:  # pragma: no cover - exercised via both paths in tests
         Text,
         create_engine,
     )
-    from sqlalchemy.orm import (  # type: ignore[import-untyped]
-        Session,
+    from sqlalchemy.orm import (
         declarative_base,
         sessionmaker,
     )
@@ -35,7 +34,7 @@ try:  # pragma: no cover - exercised via both paths in tests
     Base = declarative_base()
 except ImportError:  # pragma: no cover - exercised via both paths in tests
     HAS_SQLALCHEMY = False
-    Base = None  # type: ignore[assignment]
+    Base = None
 
 
 if HAS_SQLALCHEMY:
@@ -126,7 +125,7 @@ if HAS_SQLALCHEMY:
             self.SessionFactory = sessionmaker(bind=self.engine)
             self._local = threading.local()
 
-        def get_session(self) -> Session:
+        def get_session(self) -> Any:
             if not hasattr(self._local, "session"):
                 self._local.session = self.SessionFactory()
             return self._local.session
@@ -199,7 +198,7 @@ class SQLiteDatabaseManager:
             self._local.conn = sqlite3.connect(
                 self.path, check_same_thread=False
             )
-        return self._local.conn
+        return self._local.conn  # type: ignore[no-any-return]
 
     def _init_schema(self) -> None:
         conn = self._get_conn()

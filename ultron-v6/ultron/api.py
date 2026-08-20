@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from ultron import __version__
 from ultron.tracing import TRACER
@@ -36,14 +37,14 @@ class MetricsRegistry:
 
     def inc(self, name: str, labels: tuple[str, ...] = ()) -> None:
         with self.lock:
-            key = (name, labels)
+            key = (name,) + labels
             self.counters[key] = self.counters.get(key, 0) + 1
 
     def set(self, name: str, value: float) -> None:
         with self.lock:
             self.gauges[name] = value
 
-    def snapshot(self) -> dict[str, float]:
+    def snapshot(self) -> dict[str, Any]:
         with self.lock:
             counters = dict(self.counters)
             gauges = dict(self.gauges)
@@ -71,12 +72,11 @@ class MetricsRegistry:
             f"ultron_process_uptime_seconds {uptime:.3f}",
             "# TYPE ultron_http_requests_total counter",
         ]
-        for (name, labels), value in sorted(snap["counters"].items()):
+        for key, value in sorted(snap["counters"].items()):
+            name = key[0]
             label_str = ",".join(
-                f'{key}="{val}"'
-                for key, val in zip(
-                    labels[0::2], labels[1::2], strict=True
-                )
+                f'{k}="{v}"'
+                for k, v in zip(key[1::2], key[2::2], strict=True)
             )
             lines.append(f"{name}{{{label_str}}} {value}")
         for name, value in sorted(snap["gauges"].items()):

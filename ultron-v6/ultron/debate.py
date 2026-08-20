@@ -91,7 +91,7 @@ class DebateProtocol:
 
         TRACER.end_span(span_id)
 
-        if verdict and "verdict" in verdict:
+        if isinstance(verdict, dict) and "verdict" in verdict:
             return verdict
 
         return {

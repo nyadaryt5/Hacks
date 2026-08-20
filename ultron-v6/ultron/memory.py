@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ultron.db import HAS_SQLALCHEMY
 
@@ -19,14 +19,11 @@ if HAS_SQLALCHEMY:  # pragma: no branch
     from ultron.db import LessonMemoryModel  # noqa: F401
 from ultron.tracing import TRACER, SpanType
 
-if TYPE_CHECKING:  # pragma: no cover
-    from ultron.db import DatabaseManager
-
 
 class VectorMemory:
     """Vector database for semantic memory."""
 
-    def __init__(self, db_manager: DatabaseManager, backend: str = "auto"):
+    def __init__(self, db_manager: Any, backend: str = "auto"):
         self.db = db_manager
         self.embeddings: list[dict[str, Any]] = []  # In-memory store
         self._use_chromadb = False
@@ -78,7 +75,7 @@ class VectorMemory:
         mag_b = sum(x * x for x in b) ** 0.5
         if mag_a == 0 or mag_b == 0:
             return 0.0
-        return dot / (mag_a * mag_b)
+        return float(dot / (mag_a * mag_b))
 
     def store_lesson(
         self,

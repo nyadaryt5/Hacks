@@ -52,7 +52,7 @@ class ULTRONCoordinator:
         self,
         settings: ULTRONSettings,
         *,
-        db: DatabaseManager | None = None,
+        db: Any | None = None,
         budget: BudgetGovernor | None = None,
         llm: GoogleAIClient | None = None,
         memory: VectorMemory | None = None,
@@ -214,7 +214,7 @@ class ULTRONCoordinator:
         response = self.llm.chat(system, user)
         plan = parse_json_response(response)
 
-        if plan and "action_type" in plan:
+        if isinstance(plan, dict) and "action_type" in plan:
             if not isinstance(plan.get("parameters"), dict):
                 plan["parameters"] = {}
             print(f"  [PLAN] {plan.get('thought', '')[:100]}")

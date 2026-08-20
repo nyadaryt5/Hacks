@@ -155,7 +155,7 @@ if HAS_PYDANTIC:
 else:
 
     @dataclass
-    class GoogleAIConfig:
+    class GoogleAIConfig:  # type: ignore[no-redef]
         api_keys: list[str] = field(default_factory=list)
         model: str = "gemini-1.5-flash"
         base_url: str = GEMINI_BASE_URL
@@ -182,7 +182,7 @@ else:
             return self.api_keys
 
     @dataclass
-    class BudgetConfig:
+    class BudgetConfig:  # type: ignore[no-redef]
         max_tokens_per_minute: int = 10000
         max_tokens_per_hour: int = 100000
         max_tokens_per_session: int = 500000
@@ -190,13 +190,13 @@ else:
         warn_at_percent: float = 80.0
 
     @dataclass
-    class DatabaseConfig:
+    class DatabaseConfig:  # type: ignore[no-redef]
         url: str = "sqlite:///ultron_v6.db"
         echo: bool = False
         pool_size: int = 5
 
     @dataclass
-    class ULTRONSettings:
+    class ULTRONSettings:  # type: ignore[no-redef]
         google_ai: GoogleAIConfig = field(default_factory=GoogleAIConfig)
         budget: BudgetConfig = field(default_factory=BudgetConfig)
         database: DatabaseConfig = field(default_factory=DatabaseConfig)
