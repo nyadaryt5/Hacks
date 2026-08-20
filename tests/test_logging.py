@@ -71,8 +71,12 @@ def test_json_formatter_merges_structured_extra():
     assert payload["target"] == "example.com"
 
 
-def test_missing_api_key_emits_critical_log_record(caplog):
+def test_missing_api_key_emits_critical_log_record(caplog, monkeypatch):
     """A fatal config failure must produce a CRITICAL log record."""
+    # Override the session-wide dummy key so we exercise the missing-key path.
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    for i in range(1, 11):
+        monkeypatch.delenv(f"GOOGLE_API_KEY_{i}", raising=False)
     with caplog.at_level(logging.CRITICAL, logger="ultron.config"):
         try:
             load_settings()
