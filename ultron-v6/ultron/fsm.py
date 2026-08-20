@@ -54,6 +54,7 @@ VALID_TRANSITIONS: Dict[AgentState, Set[AgentState]] = {
     AgentState.AUTHORIZATION: {
         AgentState.EXECUTION,
         AgentState.PLANNING,
+        AgentState.REPORTING,
         AgentState.ERROR,
         AgentState.TERMINATED,
     },

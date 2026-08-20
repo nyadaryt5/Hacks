@@ -75,6 +75,16 @@ def test_error_and_terminated_are_terminal_for_complete():
     assert VALID_TRANSITIONS[AgentState.TERMINATED] == set()
 
 
+def test_authorization_can_skip_to_reporting_when_plan_aborted(fsm):
+    """An aborted plan must reach REPORTING without an FSM error."""
+    fsm.transition(AgentState.DISCOVERY)
+    fsm.transition(AgentState.ANALYSIS)
+    fsm.transition(AgentState.PLANNING)
+    fsm.transition(AgentState.AUTHORIZATION)
+    assert fsm.transition(AgentState.REPORTING) is True
+    assert fsm.current_state == AgentState.REPORTING
+
+
 def test_every_referenced_state_exists():
     names = {state.name for state in AgentState}
     for state, targets in VALID_TRANSITIONS.items():
