@@ -69,9 +69,9 @@ def make_coordinator(
         llm=llm,
         debate=DebateProtocol(llm),
         event_bus=event_bus or EventBus(),
-        memory=__import__("ultron.memory", fromlist=["VectorMemory"]).VectorMemory(
-            db, backend="hash"
-        ),
+        memory=__import__(
+            "ultron.memory", fromlist=["VectorMemory"]
+        ).VectorMemory(db, backend="hash"),
     )
     monkeypatch.chdir(tmp_path)
     return coord
@@ -90,7 +90,10 @@ def test_full_launch_happy_path(settings, tmp_path, monkeypatch):
     responses = [
         '{"services": ["http"], "vulnerabilities": [], "next_steps": []}',
         json.dumps(PLAN_SAFE),
-        '{"success": true, "confidence": 0.9, "findings": [{"severity": "low", "title": "info leak"}]}',
+        (
+            '{"success": true, "confidence": 0.9, "findings": '
+            '[{"severity": "low", "title": "info leak"}]}'
+        ),
     ]
     coord = make_coordinator(settings, tmp_path, monkeypatch, responses)
 

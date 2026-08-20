@@ -39,7 +39,9 @@ def _ok_json(handler):
 
 def _client(transport, settings=None, **kwargs):
     settings = settings or _settings()
-    return GoogleAIClient(settings, BudgetGovernor(settings), transport=transport, **kwargs)
+    return GoogleAIClient(
+        settings, BudgetGovernor(settings), transport=transport, **kwargs
+    )
 
 
 def test_chat_returns_content_and_records_usage():
@@ -162,4 +164,6 @@ def test_network_error_returns_error_string():
 
 
 def test_context_prefix_describes_authorized_testing():
-    assert "AUTHORIZED" in __import__("ultron.llm", fromlist=["x"]).GEMINI_CONTEXT_PREFIX
+    import ultron.llm as llm_module
+
+    assert "AUTHORIZED" in llm_module.GEMINI_CONTEXT_PREFIX

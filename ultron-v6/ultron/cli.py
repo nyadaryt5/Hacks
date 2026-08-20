@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from typing import List, Optional
 
 from ultron import __version__
+from ultron.api import serve_forever
 from ultron.config import ConfigurationError, load_settings
 from ultron.coordinator import _BANNER, ULTRONCoordinator
 from ultron.logging_setup import configure_logging
@@ -34,11 +36,33 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "target", help="Target IP address or domain (authorized scope)"
-    )
-    parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
+    subparsers = parser.add_subparsers(dest="command")
+
+    run_parser = subparsers.add_parser(
+        "run", help="Run the pentest pipeline against a target"
+    )
+    run_parser.add_argument(
+        "target", help="Target IP address or domain (authorized scope)"
+    )
+    _add_common_flags(run_parser)
+
+    serve_parser = subparsers.add_parser(
+        "serve", help="Run the health/metrics HTTP server"
+    )
+    serve_parser.add_argument(
+        "--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)"
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=8080, help="Bind port (default: 8080)"
+    )
+    _add_common_flags(serve_parser)
+
+    return parser
+
+
+def _add_common_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -50,14 +74,34 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit structured JSON log records",
     )
-    return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entry point. Returns the process exit code."""
-    args = build_parser().parse_args(argv)
+    if argv is None:
+        argv = sys.argv[1:]
+    # Legacy compatibility: 'ultron-v6 TARGET' means 'ultron-v6 run TARGET'.
+    if argv and argv[0] not in (
+        "run",
+        "serve",
+        "--help",
+        "-h",
+        "--version",
+    ):
+        argv = ["run"] + list(argv)
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command is None:
+        parser.print_help(sys.stderr)
+        return 2
 
     configure_logging(level=args.log_level, json_format=args.json_logs)
+
+    if args.command == "serve":
+        serve_forever(host=args.host, port=args.port)
+        return 0
 
     try:
         settings = load_settings({"target": args.target})

@@ -19,7 +19,8 @@ def test_help_exits_zero(capsys):
     assert excinfo.value.code == 0
     out = capsys.readouterr().out
     assert "usage: ultron-v6" in out
-    assert "--json-logs" in out
+    assert "run" in out
+    assert "serve" in out
 
 
 def test_version_exits_zero(capsys):
@@ -29,10 +30,9 @@ def test_version_exits_zero(capsys):
     assert __version__ in capsys.readouterr().out
 
 
-def test_missing_target_exits_two():
-    with pytest.raises(SystemExit) as excinfo:
-        main([])
-    assert excinfo.value.code == 2
+def test_missing_command_returns_two(capsys):
+    assert main([]) == 2
+    assert "usage" in capsys.readouterr().err
 
 
 def test_missing_api_key_returns_one_without_crashing(capsys):
@@ -79,6 +79,33 @@ def test_invalid_log_level_is_rejected():
     with pytest.raises(SystemExit) as excinfo:
         main(["example.com", "--log-level", "LOUD"])
     assert excinfo.value.code == 2
+
+
+def test_serve_command_starts_metrics_server(monkeypatch):
+    calls = {}
+
+    def fake_serve_forever(host="0.0.0.0", port=8080, ready_check=None):
+        calls["host"] = host
+        calls["port"] = port
+
+    monkeypatch.setattr("ultron.cli.serve_forever", fake_serve_forever)
+    assert main(["serve", "--host", "127.0.0.1", "--port", "9000"]) == 0
+    assert calls == {"host": "127.0.0.1", "port": 9000}
+
+
+def test_legacy_invocation_is_treated_as_run(monkeypatch, capsys):
+    """'ultron-v6 TARGET' must behave like 'ultron-v6 run TARGET'."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-test")
+
+    class FakeCoordinator:
+        def __init__(self, settings):
+            pass
+
+        def launch(self):
+            pass
+
+    monkeypatch.setattr("ultron.cli.ULTRONCoordinator", FakeCoordinator)
+    assert main(["example.com"]) == 0
 
 
 def test_build_parser_prog_name():

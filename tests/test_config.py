@@ -1,7 +1,5 @@
 """Configuration validation tests for ULTRONSettings and load_settings."""
 
-import os
-
 import pytest
 
 from ultron_v6 import (
