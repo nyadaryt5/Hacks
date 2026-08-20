@@ -1,0 +1,173 @@
+# ULTRON v6 — Architecture
+
+## 1. Component map
+
+```mermaid
+flowchart TB
+    subgraph CLI
+        run["ultron-v6 run TARGET"]
+        serve["ultron-v6 serve"]
+    end
+
+    subgraph Coordinator
+        FSM["FiniteStateMachine"]
+        BUS["EventBus"]
+        MEM["VectorMemory"]
+        BUDGET["BudgetGovernor"]
+        LLM["GoogleAIClient"]
+        DEBATE["DebateProtocol"]
+        JAIL["SafetyJail"]
+        DB["DatabaseManager"]
+        TRACER["Tracer"]
+    end
+
+    run --> Coordinator
+    serve --> API["Health/Metrics HTTP server"]
+
+    FSM --> MEM
+    FSM --> LLM
+    LLM --> BUDGET
+    LLM --> DEBATE
+    DEBATE --> BUS
+    FSM --> JAIL
+    MEM --> DB
+    BUS --> TRACER
+    LLM --> TRACER
+    FSM --> TRACER
+```
+
+## 2. FSM lifecycle
+
+States and legal transitions (source of truth: `ultron/fsm.py`):
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> DISCOVERY
+    DISCOVERY --> ANALYSIS
+    ANALYSIS --> PLANNING
+    PLANNING --> AUTHORIZATION
+    AUTHORIZATION --> EXECUTION
+    AUTHORIZATION --> REPORTING : plan vetoed
+    EXECUTION --> VERIFICATION
+    VERIFICATION --> REPORTING
+    REPORTING --> COMPLETE
+    COMPLETE --> [*]
+
+    DISCOVERY --> ERROR
+    ANALYSIS --> ERROR
+    PLANNING --> ERROR
+    AUTHORIZATION --> ERROR
+    EXECUTION --> ERROR
+    VERIFICATION --> ERROR
+    ERROR --> PLANNING
+    ERROR --> TERMINATED
+
+    DISCOVERY --> TERMINATED
+    ANALYSIS --> TERMINATED
+    PLANNING --> TERMINATED
+    AUTHORIZATION --> TERMINATED
+    EXECUTION --> TERMINATED
+    VERIFICATION --> TERMINATED
+    TERMINATED --> [*]
+```
+
+Every transition is validated against `VALID_TRANSITIONS`, recorded in
+`FiniteStateMachine.history` (old state, new state, timestamp), and emitted
+as a `SpanType.STATE_TRANSITION` trace span.
+
+## 3. Phase sequence
+
+```mermaid
+sequenceDiagram
+    participant C as Coordinator
+    participant F as FSM
+    participant M as VectorMemory
+    participant L as GoogleAIClient
+    participant B as BudgetGovernor
+    participant D as DebateProtocol
+    participant J as SafetyJail
+    participant E as EventBus
+
+    C->>F: transition(DISCOVERY)
+    C->>C: nmap --top-ports (jail-filtered, shell=False)
+    C->>M: store_lesson(recon)
+
+    C->>F: transition(ANALYSIS)
+    C->>M: get_relevant_lessons(target)
+    C->>L: chat(analyze scan)
+    L->>B: check_budget / record_usage
+    L-->>C: services + vulnerabilities
+
+    C->>F: transition(PLANNING)
+    C->>L: chat(plan next action)
+    L-->>C: action plan
+
+    C->>F: transition(AUTHORIZATION)
+    alt plan.safety_level == destructive
+        C->>D: debate(plan, context)
+        D->>L: attacker chat
+        D->>L: defender chat
+        D->>L: judge chat
+        D-->>C: verdict
+        C->>E: publish(DEBATE_COMPLETED)
+    end
+
+    alt authorized
+        C->>F: transition(EXECUTION)
+        C->>J: filter_command(action)
+        C->>C: execute tool (temp dir, no shell)
+        C->>F: transition(VERIFICATION)
+        C->>L: chat(verify result)
+        C->>E: publish(VULNERABILITY_FOUND, ...)
+    end
+
+    C->>F: transition(REPORTING)
+    C->>C: write ULTRON_V6_REPORT_*.md
+    C->>F: transition(COMPLETE)
+```
+
+## 4. Budget guardrails
+
+`BudgetGovernor` (ultron/budget.py) enforces, per API key:
+
+- **Session token budget** — `ULTRON_BUDGET_MAX_TOKENS_PER_SESSION`
+- **Per-key RPM** — `max_rpm_per_key` (14 by default)
+- **Per-key RPD** — `max_rpd_per_key` (1400 by default)
+- **Warning threshold** — one `BUDGET_WARNING` event when usage crosses
+  `warn_at_percent` (published once per session)
+
+`GoogleAIClient.chat()` checks the budget *before* the HTTP call, records
+usage *after* a successful response, and rotates to the next API key on
+HTTP 429.
+
+## 5. Safety layers
+
+1. **Prompt jail** — the LLM system prompt pins an authorized-testing context.
+2. **SafetyJail.filter_command** — blocks denylisted destructive patterns
+   (`rm -rf /`, reverse shells, writes to `/etc`, ...) and any IP literal
+   outside the authorized scope.
+3. **Execution hygiene** — `shlex.split` + `shell=False` + system temp dir.
+4. **Debate veto** — destructive plans require attacker/defender/judge
+   approval before execution.
+
+## 6. Persistence
+
+`DatabaseManager` selects between:
+
+- `SQLAlchemyDatabaseManager` — declarative models: `episodes`,
+  `target_state`, `goals`, `findings`, `lateral_targets`, `lesson_memory`.
+- `SQLiteDatabaseManager` — stdlib-only fallback with the same schema.
+
+`VectorMemory` stores lessons in both the vector store (ChromaDB, or an
+in-memory 128-dim hash embedding with cosine similarity) and the
+relational database.
+
+## 7. Observability
+
+- `Tracer` — span-based tracing: `LLM_CALL`, `TOOL_EXECUTION`,
+  `STATE_TRANSITION`, `EVENT_PUBLISHED`, `EVENT_CONSUMED`, `VECTOR_QUERY`,
+  `DEBATE`; per-span token and cost attribution.
+- `logging_setup.configure_logging` — human-readable or JSON record
+  formats, optional file sink.
+- `api.start_server` — `/healthz`, `/readyz`, Prometheus `/metrics`.

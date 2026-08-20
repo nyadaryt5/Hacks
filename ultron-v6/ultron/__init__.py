@@ -1,23 +1,29 @@
-#!/usr/bin/env python3
+"""ULTRON v6 — autonomous penetration testing framework.
+
+Module layout
+-------------
+config        typed, validated settings (pydantic + stdlib fallback)
+logging_setup central logging configuration (text / structured JSON)
+tracing       span-based observability
+budget        token / rate-limit budget governor
+fsm           finite state machine driving the agent lifecycle
+events        in-process event bus
+db            SQLAlchemy ORM models with a raw-SQLite fallback
+memory        vector memory (ChromaDB with hash-based fallback)
+json_utils    tolerant JSON parsing of LLM output
+safety        scope validation and destructive-command jail
+llm           Google AI (Gemini) client with key rotation
+debate        multi-agent debate protocol
+coordinator   FSM-driven orchestration of the pentest phases
+cli           command line interface
+api           health and Prometheus metrics HTTP endpoints
 """
-ULTRON v6 — Autonomous Pentest Framework
-========================================
-Backwards-compatible entry module.
 
-The implementation lives in the :mod:`ultron` package. This module
-re-exports the public API and the CLI entry point so legacy usages
-(``python ultron_v6.py <target>``, ``python -m ultron_v6`` and the
-``ultron-v6`` console script) keep working unchanged.
-"""
+__version__ = "6.1.0"
 
-from __future__ import annotations
-
-import sys
-
-from ultron import __version__
+from ultron.api import METRICS, MetricsRegistry, serve_forever, start_server
 from ultron.budget import BudgetGovernor
-from ultron.cli import main
-from ultron.config import (  # noqa: F401
+from ultron.config import (
     GEMINI_BASE_URL,
     HAS_PYDANTIC,
     BudgetConfig,
@@ -27,7 +33,8 @@ from ultron.config import (  # noqa: F401
     ULTRONSettings,
     load_settings,
 )
-from ultron.db import (  # noqa: F401
+from ultron.coordinator import ULTRONCoordinator
+from ultron.db import (
     HAS_SQLALCHEMY,
     Base,
     DatabaseManager,
@@ -35,7 +42,7 @@ from ultron.db import (  # noqa: F401
 )
 from ultron.debate import DebateProtocol
 from ultron.events import EVENT_BUS, Event, EventBus, EventType
-from ultron.fsm import (  # noqa: F401
+from ultron.fsm import (
     VALID_TRANSITIONS,
     AgentState,
     FiniteStateMachine,
@@ -48,7 +55,7 @@ from ultron.memory import VectorMemory
 from ultron.safety import FORBIDDEN_PATTERNS, SafetyJail
 from ultron.tracing import TRACER, Span, SpanType, Tracer
 
-if HAS_SQLALCHEMY:  # ORM models only exist when SQLAlchemy is installed
+if HAS_SQLALCHEMY:  # pragma: no branch
     from ultron.db import (  # noqa: F401
         EpisodeModel,
         FindingModel,
@@ -58,8 +65,6 @@ if HAS_SQLALCHEMY:  # ORM models only exist when SQLAlchemy is installed
         SQLAlchemyDatabaseManager,
         TargetStateModel,
     )
-
-from ultron.coordinator import ULTRONCoordinator  # noqa: E402,F401 (shim re-export)
 
 __all__ = [
     "AgentState",
@@ -84,6 +89,8 @@ __all__ = [
     "HAS_SQLALCHEMY",
     "InvalidTransitionError",
     "JsonFormatter",
+    "METRICS",
+    "MetricsRegistry",
     "SQLAlchemyDatabaseManager",
     "SQLiteDatabaseManager",
     "SafetyJail",
@@ -98,9 +105,7 @@ __all__ = [
     "__version__",
     "configure_logging",
     "load_settings",
-    "main",
     "parse_json_response",
+    "serve_forever",
+    "start_server",
 ]
-
-if __name__ == "__main__":
-    sys.exit(main())
