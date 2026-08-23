@@ -143,6 +143,33 @@ jobs:
       - name: Dependency audit
         run: python -m pip_audit --requirement ultron-v6/requirements.lock
 
+  lockfiles:
+    name: Lockfile drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            ultron-v6/requirements.lock
+            ultron-v6/requirements-dev.lock
+
+      - name: Install pip-tools
+        run: python -m pip install --upgrade pip pip-tools
+
+      - name: Fail if committed lockfiles drift
+        working-directory: ultron-v6
+        run: |
+          set -euo pipefail
+          pip-compile --dry-run --quiet --output-file=requirements.lock requirements.in
+          pip-compile --dry-run --quiet --output-file=requirements-dev.lock requirements-dev.in
+          pip-compile --dry-run --quiet --output-file=requirements-chroma.lock requirements-chroma.in
+
   build:
     name: Build package
     runs-on: ubuntu-latest
