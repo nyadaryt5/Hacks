@@ -86,16 +86,27 @@ A deeper dive with sequence diagrams lives in
 
 ## Quick start (Docker)
 
+The compose stack is self-contained: `ultron-v6/Dockerfile` is the image
+referenced by `docker-compose.yml` (repo-root build context). Neither
+service requires a live Gemini account for liveness.
+
+| Service | `GOOGLE_API_KEY` | Offline? |
+|---------|------------------|----------|
+| `ultron` (`serve`) | Optional. `/healthz` and `/metrics` do **not** call Gemini. | Yes — start with the key unset. |
+| `ultron run <target>` | Required. Planning/execution calls Gemini. | No. |
+| `test` (`docker compose run --rm test`) | Dummy key is injected; LLM is mocked. | Yes. |
+
 ```bash
+# Offline: no API key needed for health/metrics
 docker compose up --build
 # health check:  curl http://localhost:8080/healthz
 # metrics:       curl http://localhost:8080/metrics
 ```
 
-Run a scan inside the container:
+Run a scan inside the container (needs a real key):
 
 ```bash
-docker compose run --rm ultron run example.com
+GOOGLE_API_KEY='AIza...' docker compose run --rm ultron run example.com
 ```
 
 ## Installation
