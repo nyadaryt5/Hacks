@@ -218,6 +218,7 @@ mypy ultron-v6/ultron ultron-v6/ultron_v6.py
 ruff check ultron-v6/ultron
 bandit -r ultron-v6/ultron -c pyproject.toml
 pip-audit --requirement ultron-v6/requirements.lock
+make lockfile-check                             # pip-compile --dry-run vs committed locks
 ```
 
 Tests use `httpx.MockTransport` for LLM requests and a local/hash-backed
