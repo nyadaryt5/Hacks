@@ -6,11 +6,14 @@ PACKAGE := ./ultron-v6
 .PHONY: install dev test coverage lint typecheck security build \
         docker-up docker-down docker-test clean
 
-install:            ## Install the package (runtime deps only)
-	$(PIP) install -e "$(PACKAGE)"
+install:            ## Install the package from the pinned runtime lockfile
+	$(PIP) install -r "$(PACKAGE)/requirements.lock"
+	$(PIP) install --no-deps -e "$(PACKAGE)"
 
-dev:                ## Install the package with dev tooling
-	$(PIP) install -e "$(PACKAGE)[dev]"
+dev:                ## Install the package from pinned runtime and dev lockfiles
+	$(PIP) install -r "$(PACKAGE)/requirements.lock"
+	$(PIP) install -r "$(PACKAGE)/requirements-dev.lock"
+	$(PIP) install --no-deps -e "$(PACKAGE)"
 
 test:               ## Run the test suite
 	$(PYTEST) tests

@@ -107,10 +107,12 @@ Requirements: Python 3.10+.
 git clone https://github.com/nyadaryt5/Hacks.git
 cd Hacks
 
-# 2. Create a virtualenv and install the package (editable, with dev tools)
+# 2. Create a virtualenv and install the pinned runtime and dev dependencies
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e "./ultron-v6[dev]"          # reproducible: pip install -r ultron-v6/requirements.lock
+python -m pip install -r ultron-v6/requirements.lock
+python -m pip install -r ultron-v6/requirements-dev.lock
+python -m pip install --no-deps -e ./ultron-v6
 
 # 3. Configure your Google AI API key (see Configuration below)
 cp ultron-v6/.env.example .env
@@ -121,12 +123,18 @@ ultron-v6 --version
 python -m ultron_v6 --help
 ```
 
-Optional extras:
+Optional ChromaDB backend:
 
 ```bash
-pip install -e "./ultron-v6[chroma]"   # ChromaDB vector backend
-pip install -e "./ultron-v6[all]"      # everything
+# The optional backend has its own committed lockfile.
+python -m pip install -r ultron-v6/requirements-chroma.lock
 ```
+
+The commands above intentionally install the committed lockfiles first and
+then install the local package with `--no-deps`. This prevents the editable
+install from silently resolving newer dependency versions. Regenerate the
+lockfiles only when intentionally updating dependencies (see
+`ultron-v6/README.md`).
 
 ## Configuration
 
@@ -187,12 +195,13 @@ Endpoints served by `ultron-v6 serve`:
 
 ## Testing
 
-The test suite runs from a fresh clone without any external services:
+The test suite runs from a fresh clone without any external services or API
+accounts. Install dependencies using the pinned commands in the installation
+section, then run:
 
 ```bash
-pip install -e "./ultron-v6[dev]"
-pytest                                     # full suite (151 tests)
-pytest --cov=ultron --cov-fail-under=85    # coverage gate
+pytest                                      # full offline suite (151 tests)
+pytest --cov=ultron --cov-report=term-missing --cov-fail-under=85
 flake8 ultron-v6/ultron ultron-v6/ultron_v6.py tests
 mypy ultron-v6/ultron ultron-v6/ultron_v6.py
 ruff check ultron-v6/ultron
@@ -200,9 +209,14 @@ bandit -r ultron-v6/ultron -c pyproject.toml
 pip-audit --requirement ultron-v6/requirements.lock
 ```
 
-CI runs all of the above on every push and pull request
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) across
-Python 3.10, 3.11 and 3.12.
+Tests use `httpx.MockTransport` for LLM requests and a local/hash-backed
+memory/database path. Tests that genuinely require a service must use the
+registered `network` marker; pytest excludes those by default. Opt into them
+with `pytest -m network` when the required service is available.
+
+CI runs the same gates on every push and pull request
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) across Python 3.10,
+3.11 and 3.12. The workflow also builds the wheel and source distribution.
 
 ## Project layout
 

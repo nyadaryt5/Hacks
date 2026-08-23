@@ -8,9 +8,15 @@ This directory contains the installable **ultron-v6** package.
 ## Install
 
 ```bash
-pip install -e ".[dev]"          # package + dev tooling
-pip install -r requirements.lock # reproducible pinned install
+# Install the committed, reproducible dependency sets first.
+python -m pip install -r requirements.lock
+python -m pip install -r requirements-dev.lock
+python -m pip install --no-deps -e .
 ```
+
+The runtime and development lockfiles are intentionally separate. The dev
+lockfile constrains development tools against `requirements.lock`; installing
+both before the editable package install keeps a fresh clone reproducible.
 
 ## Run
 
