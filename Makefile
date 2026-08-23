@@ -44,6 +44,11 @@ docker-down:        ## Stop the compose stack
 docker-test:        ## Run the test suite inside the container
 	docker compose run --rm test
 
+lockfile-check:     ## Fail if pip-compile would change committed lockfiles
+	cd ultron-v6 && pip-compile --dry-run --quiet --output-file=requirements.lock requirements.in
+	cd ultron-v6 && pip-compile --dry-run --quiet --output-file=requirements-dev.lock requirements-dev.in
+	cd ultron-v6 && pip-compile --dry-run --quiet --output-file=requirements-chroma.lock requirements-chroma.in
+
 clean:              ## Remove build artifacts
 	rm -rf dist build .pytest_cache .mypy_cache .ruff_cache htmlcov coverage.xml
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +

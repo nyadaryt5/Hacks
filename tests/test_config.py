@@ -59,6 +59,29 @@ def test_load_settings_succeeds_with_key(monkeypatch):
     assert settings.target == "example.com"
 
 
+def test_env_example_documents_required_keys():
+    """The committed .env.example must list the documented variables."""
+    from pathlib import Path
+
+    example = Path("ultron-v6/.env.example").read_text(encoding="utf-8")
+    for name in (
+        "GOOGLE_API_KEY",
+        "ULTRON_MODEL",
+        "ULTRON_MAX_ITERATIONS",
+        "ULTRON_MAX_LATERAL_DEPTH",
+        "ULTRON_OUTPUT_MAX_CHARS",
+        "ULTRON_CACHE_TTL_HOURS",
+        "ULTRON_LOG_LEVEL",
+        "ULTRON_BUDGET_MAX_TOKENS_PER_SESSION",
+        "ULTRON_BUDGET_MAX_TOKENS_PER_MINUTE",
+        "ULTRON_BUDGET_MAX_TOKENS_PER_HOUR",
+        "ULTRON_BUDGET_MAX_COST_PER_SESSION_USD",
+        "ULTRON_BUDGET_WARN_AT_PERCENT",
+        "ULTRON_DB_URL",
+    ):
+        assert name in example, name
+
+
 def test_load_settings_raises_without_key(caplog):
     with caplog.at_level("CRITICAL", logger="ultron"):
         with pytest.raises(ConfigurationError, match="GOOGLE_API_KEY"):
