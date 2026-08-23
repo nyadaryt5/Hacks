@@ -117,7 +117,7 @@ ruff==0.16.3
     # via -r requirements-dev.in
 sortedcontainers==2.4.0
     # via cyclonedx-python-lib
-stevedore==5.9.1
+stevedore==5.8.0
     # via bandit
 tomli==2.4.1
     # via pip-audit

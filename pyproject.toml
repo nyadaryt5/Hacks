@@ -1,6 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Network-dependent tests must opt in explicitly; the default suite is offline.
+addopts = "-ra -m 'not network'"
+markers = [
+    "network: test requires an external network service and is opt-in",
+]
 
 [tool.coverage.run]
 source = ["ultron"]

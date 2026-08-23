@@ -5,6 +5,23 @@ All notable changes to ULTRON v6 are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Active `.github/workflows/ci.yml` with Python 3.10–3.12 lint, typecheck,
+  85% coverage, Bandit, pip-audit and package-build gates on every push and
+  pull request.
+- Explicit pytest `network` marker; network-dependent tests are opt-in and
+  excluded from the default offline suite.
+
+### Fixed
+
+- Updated the committed runtime and development pins to remain installable on
+  the full supported Python 3.10–3.12 matrix (`greenlet` and `stevedore`).
+- Documented a lockfile-first fresh-clone install path and expanded the
+  threat model with key rotation, budget controls and secret-manager examples.
+
 ## [6.1.1] - 2026-08-21
 
 ### Added

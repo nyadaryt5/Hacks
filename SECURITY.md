@@ -63,9 +63,33 @@ configuration: the authorized scope, budgets, and denylists.
 |---|------|-------------|------------|
 | 1 | **LLM prompt injection** | A target's banner, page, or scan output is fed back into the model and could try to steer it into out-of-scope or destructive actions. | Every model-proposed command passes through the Safety Jail before execution (`ultron/safety.py`): destructive-pattern denylist + per-IP scope validation. The system prompt pins the model to an authorized-testing context (`ultron/llm.py`, `GEMINI_CONTEXT_PREFIX`). |
 | 2 | **Safety-jail bypass** | An attacker (or a creative model) crafts a command that evades the denylist or smuggles an out-of-scope target. | `SafetyJail.filter_command` (`ultron/safety.py`) matches `FORBIDDEN_PATTERNS` case-insensitively and rejects any IP literal not inside `allowed_networks` / `allowed_targets`. Commands run with `shell=False` (no shell metacharacter expansion). Risky/destructive plans additionally require adversarial approval via the debate protocol (`ultron/debate.py`). Report any bypass privately (see above). |
-| 3 | **API key exposure** | `GOOGLE_API_KEY` and rotated keys grant billable API access; leakage means cost and quota abuse. | Keys are read only from the environment (`ultron/config.py`), never logged. In deployed contexts, source them from a secret manager (see below). The Budget Governor (`ultron/budget.py`) caps tokens/cost per session and enforces per-key RPM/RPD limits, bounding the blast radius of a leaked key. |
+| 3 | **API key exposure** | `GOOGLE_API_KEY` and rotated keys grant billable API access; leakage means cost and quota abuse. | Keys are read only from the environment (`ultron/config.py`), never logged. In deployed contexts, source them from a secret manager (see below). The Budget Governor (`ultron/budget.py`) caps estimated tokens per session and enforces per-key RPM/RPD limits, bounding the blast radius of a leaked key. Provider-side spend and quota limits remain the authoritative USD control. |
 | 4 | **Out-of-scope targeting** | The agent scans or exploits a host the operator was never authorized to touch — a legal and operational hazard. | `SafetyJail.validate_scope` authorizes only configured targets/networks; any IP literal outside scope is blocked (`ultron/safety.py`). Lateral-movement depth is capped (`ULTRON_MAX_LATERAL_DEPTH`). Operators must still confirm written authorization for every target. |
-| 5 | **Runaway cost / DoS-of-wallet** | A loop or misbehaving model burns through API budget or floods a target. | `BudgetGovernor` (`ultron/budget.py`) enforces per-minute/hour/session token budgets and a session USD cap; `ULTRON_MAX_ITERATIONS` bounds the FSM loop. |
+| 5 | **Runaway cost / DoS-of-wallet** | A loop or misbehaving model burns through API budget or floods a target. | `BudgetGovernor` (`ultron/budget.py`) enforces the session token ceiling and per-key request limits; its warning and graceful-termination paths provide operator intervention points. `ULTRON_MAX_ITERATIONS` bounds the FSM loop. Configure conservative limits for the deployment and monitor provider-side spend/quota as the authoritative USD control. |
+
+### Key rotation and budget controls
+
+The LLM client and budget governor are deliberately separate controls:
+
+- `GoogleAIClient` (`ultron-v6/ultron/llm.py`) collects the primary
+  `GOOGLE_API_KEY` plus `GOOGLE_API_KEY_1` through `GOOGLE_API_KEY_10`. It
+  selects keys round-robin under a lock, never includes key values in logs or
+  tracing attributes, and moves to the next key after an HTTP 429. Retries
+  are bounded by `max_retries`; rotation is not a substitute for revoking a
+  compromised key.
+- `BudgetGovernor` (`ultron-v6/ultron/budget.py`) checks the estimated token
+  cost before each request, enforces the session token ceiling, and tracks
+  per-key requests-per-minute and requests-per-day limits. Successful calls
+  record actual response-token usage. It emits a warning at the configured
+  session threshold and supports graceful termination so an exposed key has
+  a bounded blast radius.
+- `ULTRON_MAX_ITERATIONS` independently bounds the coordinator loop. Keep
+  the session and per-key limits conservative for production deployments.
+
+If a key may have leaked, immediately revoke it with Google, replace it in
+all secret stores, and review the usage and findings database. Do not rely on
+rotation alone: a key that has already been copied can be used outside this
+application.
 
 ### Secret management
 
@@ -77,6 +101,23 @@ secret manager rather than a committed or long-lived `.env` file:
 - **AWS Secrets Manager** / **GCP Secret Manager** / **HashiCorp Vault** —
   inject the value into the process environment at start-up.
 - **GitHub Actions secrets** — for CI, never hard-code keys in workflow YAML.
+
+For example, a deployment wrapper can fetch a secret without putting it in a
+compose file or shell history (the exact IAM/Vault authentication is
+platform-specific):
+
+```bash
+# AWS example: the process receives the value only in its environment.
+export GOOGLE_API_KEY="$(aws secretsmanager get-secret-value \
+  --secret-id ultron/google-api-key \
+  --query SecretString --output text)"
+exec ultron-v6 serve --host 0.0.0.0 --port 8080
+```
+
+For Vault, use the same pattern with a short-lived workload identity, for
+example `vault kv get -field=GOOGLE_API_KEY secret/ultron`, and export the
+result immediately before starting the process. Prefer short TTLs, least
+privilege, audit logging, and automatic rotation in the provider.
 
 Never commit real keys. `.env` is git-ignored; `ultron-v6/.env.example`
 documents the variables with placeholder values only.
