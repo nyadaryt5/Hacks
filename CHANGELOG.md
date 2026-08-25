@@ -5,6 +5,19 @@ All notable changes to ULTRON v6 are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.1] - 2026-08-25
+
+### Added
+
+- Secret-manager backends in `ultron/secrets.py`: AWS Secrets Manager
+  (`boto3`), HashiCorp Vault (`hvac`), and GCP Secret Manager, selected
+  by `ULTRON_SECRETS_BACKEND` and wired into `load_settings()`.
+- Optional Sentry error tracking (`ultron/errors.py`) behind
+  `ULTRON_SENTRY_DSN`, hooked from the coordinator exception paths.
+- Detectable structured logging via `structlog` / `python-json-logger`.
+- Threat-model table in `docs/architecture.md`.
+- Dedicated `security-audit` CI job name for pip-audit + bandit.
+
 ## [6.2.0] - 2026-08-23
 
 ### Added

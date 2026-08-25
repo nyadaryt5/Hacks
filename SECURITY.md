@@ -93,10 +93,11 @@ application.
 
 ### Secret management
 
-`GOOGLE_API_KEY` (and `GOOGLE_API_KEY_1..10`) are read from plain environment
-variables. This is acceptable for local, interactive use, but in **any
-deployed or shared context** the key should be sourced from a dedicated
-secret manager rather than a committed or long-lived `.env` file:
+`GOOGLE_API_KEY` (and `GOOGLE_API_KEY_1..10`) may still be read from the
+process environment for local use. In **any deployed or shared context**
+set `ULTRON_SECRETS_BACKEND` to `aws`, `vault`, or `gcp` so
+`ultron/secrets.py` fetches the key via boto3 Secrets Manager, HashiCorp
+Vault (`hvac`), or GCP Secret Manager before settings load:
 
 - **AWS Secrets Manager** / **GCP Secret Manager** / **HashiCorp Vault** —
   inject the value into the process environment at start-up.

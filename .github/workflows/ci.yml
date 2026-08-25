@@ -135,7 +135,7 @@ jobs:
       - name: Verify committed lockfiles match the manifests
         run: make lockfile-check
 
-  security:
+  security-audit:
     name: Security scans (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:

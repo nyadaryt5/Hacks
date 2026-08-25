@@ -188,6 +188,12 @@ and export the values (or use a `.env` loader of your choice).
 | `ULTRON_BUDGET_MAX_COST_PER_SESSION_USD` | `1.0` | Session cost cap |
 | `ULTRON_BUDGET_WARN_AT_PERCENT` | `80.0` | Warning threshold (%) |
 | `ULTRON_DB_URL` | `sqlite:///ultron_v6.db` | SQLAlchemy database URL |
+| `ULTRON_SECRETS_BACKEND` | `env` | `env`, `aws`, `vault`, or `gcp` secret source |
+| `ULTRON_AWS_SECRET_ID` | — | AWS Secrets Manager secret id (backend=`aws`) |
+| `ULTRON_VAULT_ADDR` / `ULTRON_VAULT_TOKEN` / `ULTRON_VAULT_SECRET_PATH` | — | HashiCorp Vault KV v2 (backend=`vault`) |
+| `ULTRON_GCP_SECRET_NAME` | — | GCP Secret Manager resource name |
+| `ULTRON_SENTRY_DSN` | — | Optional Sentry DSN; unset = no-op error tracking |
+| `ULTRON_JSON_LOGS` | — | Prefer `--json-logs`; structured via structlog / python-json-logger |
 
 Configuration is validated at startup by pydantic; missing keys or invalid
 values fail fast with a clear error (exit code 1).
