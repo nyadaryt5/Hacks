@@ -12,6 +12,7 @@ db            SQLAlchemy ORM models with a raw-SQLite fallback
 memory        vector memory (ChromaDB with hash-based fallback)
 json_utils    tolerant JSON parsing of LLM output
 safety        scope validation and destructive-command jail
+scope         lateral-movement approval flow on top of the jail
 llm           Google AI (Gemini) client with key rotation
 debate        multi-agent debate protocol
 coordinator   FSM-driven orchestration of the pentest phases
@@ -53,7 +54,8 @@ from ultron.json_utils import parse_json_response
 from ultron.llm import GEMINI_CONTEXT_PREFIX, GoogleAIClient
 from ultron.logging_setup import JsonFormatter, configure_logging
 from ultron.memory import VectorMemory
-from ultron.safety import FORBIDDEN_PATTERNS, SafetyJail
+from ultron.safety import FORBIDDEN_PATTERNS, SHELL_METACHARACTERS, SafetyJail
+from ultron.scope import LateralRequest, ScopeManager
 from ultron.tracing import TRACER, Span, SpanType, Tracer
 from ultron.vulns import (
     Finding,
@@ -103,6 +105,9 @@ __all__ = [
     "SQLAlchemyDatabaseManager",
     "SQLiteDatabaseManager",
     "SafetyJail",
+    "ScopeManager",
+    "LateralRequest",
+    "SHELL_METACHARACTERS",
     "Span",
     "SpanType",
     "TRACER",

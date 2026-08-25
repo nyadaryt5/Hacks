@@ -45,7 +45,12 @@ from ultron.json_utils import parse_json_response
 from ultron.llm import GEMINI_CONTEXT_PREFIX, GoogleAIClient
 from ultron.logging_setup import JsonFormatter, configure_logging
 from ultron.memory import VectorMemory
-from ultron.safety import FORBIDDEN_PATTERNS, SafetyJail
+from ultron.safety import (  # noqa: F401 (shim re-export)
+    FORBIDDEN_PATTERNS,
+    SHELL_METACHARACTERS,
+    SafetyJail,
+)
+from ultron.scope import LateralRequest, ScopeManager  # noqa: F401 (shim re-export)
 from ultron.tracing import TRACER, Span, SpanType, Tracer
 from ultron.vulns import (  # noqa: F401 (shim re-export)
     Finding,
@@ -95,6 +100,9 @@ __all__ = [
     "SQLAlchemyDatabaseManager",
     "SQLiteDatabaseManager",
     "SafetyJail",
+    "ScopeManager",
+    "LateralRequest",
+    "SHELL_METACHARACTERS",
     "Span",
     "SpanType",
     "TRACER",
