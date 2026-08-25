@@ -241,7 +241,9 @@ class Finding:
     def dedup_key(self) -> str:
         """Stable identity used to deduplicate repeated observations."""
         material = f"{self.target.lower()}|{self.title.lower()}"
-        return hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha1(  # noqa: S324 (dedup fingerprint, not security)
+            material.encode("utf-8"), usedforsecurity=False
+        ).hexdigest()[:16]
 
     def to_payload(self) -> dict[str, Any]:
         """JSON-safe payload for event publication and reports."""
