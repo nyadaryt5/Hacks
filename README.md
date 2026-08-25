@@ -3,7 +3,7 @@
 [![CI](https://github.com/nyadaryt5/Hacks/actions/workflows/ci.yml/badge.svg)](https://github.com/nyadaryt5/Hacks/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](ultron-v6/LICENSE)
-[![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen.svg)](https://github.com/nyadaryt5/Hacks/actions)
+[![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen.svg)](https://github.com/nyadaryt5/Hacks/actions)
 
 **ULTRON v6** is a production-grade autonomous penetration testing framework
 powered by Google AI (Gemini). It orchestrates LLM-driven security analysis
@@ -17,27 +17,39 @@ span-based observability — plus health/metrics endpoints for deployments.
 
 ## Overview
 
-ULTRON drives an autonomous recon → analysis → planning → authorization →
-execution → verification → reporting loop:
+ULTRON drives an autonomous recon → analysis → **iterative
+plan/authorize/execute/verify loop** → reporting:
 
 | # | Phase | State | What happens |
 |---|-------|-------|--------------|
-| 1 | **DISCOVERY** | `DISCOVERY` | nmap scans, service enumeration |
+| 1 | **DISCOVERY** | `DISCOVERY` | nmap scans (jail-checked), service enumeration |
 | 2 | **ANALYSIS** | `ANALYSIS` | Gemini analysis with vector-memory recall |
-| 3 | **PLANNING** | `PLANNING` | LLM proposes the next action (tool/code) |
+| 3 | **PLANNING** | `PLANNING` | LLM proposes the next action, with executed-action history |
 | 4 | **AUTHORIZATION** | `AUTHORIZATION` | Multi-agent debate vetoes destructive plans |
 | 5 | **EXECUTION** | `EXECUTION` | Jail-filtered command execution |
-| 6 | **VERIFICATION** | `VERIFICATION` | LLM verifies results, publishes findings |
-| 7 | **REPORTING** | `REPORTING` | Writes a markdown pentest report |
+| 6 | **VERIFICATION** | `VERIFICATION` | LLM verifies results; findings are scored (CVSS 3.1) and lateral targets enter the approval flow |
+| 7 | **REPORTING** | `REPORTING` | Markdown report: findings table, scope, budget, FSM history |
+
+Phases 3–6 form a **bounded agent loop** (`ULTRON_MAX_ITERATIONS`, default
+30): each cycle plans from fresh context (previous actions + finding
+count), and the loop stops on goal success, plan veto, jail block, token
+budget exhaustion, a repeated action, or no new progress.
 
 ### Features
 
 - **Finite State Machine** — typed, validated transitions with full history
+- **Iterative Agent Loop** — bounded plan/authorize/execute/verify cycles with
+  progress-based stopping and repeated-action detection
 - **Event Bus** — in-process pub/sub with fault-isolated subscribers
 - **Vector Memory** — ChromaDB backend with a dependency-free hash fallback
 - **Multi-Agent Debate** — attacker/defender/judge protocol for risky actions
 - **Budget Governor** — session token budgets + per-key RPM/RPD rate limits
-- **Safety Jail** — denylist of destructive patterns + scope validation
+- **CVSS 3.1 Scoring** — official base-score equations implemented in-tree;
+  findings are scored, severity-normalized, deduped and persisted
+- **Scope Manager** — lateral-movement targets need depth-limited operator
+  approval before they become jail-legal
+- **Safety Jail** — shell-metacharacter blocklist, denylist of destructive
+  patterns, and scope validation of IPs, URL hosts and FQDNs
 - **Observability** — span-based tracing, structured JSON logging
 - **Health & Metrics** — `/healthz`, `/readyz`, Prometheus `/metrics`
 - **Typed config** — pydantic settings validated at startup (stdlib fallback)
@@ -55,6 +67,8 @@ flowchart LR
         LLM[Google AI Client]
         DEBATE[Debate Protocol]
         JAIL[Safety Jail]
+        SCOPE[Scope Manager]
+        FINDINGS[Finding Store / CVSS 3.1]
         DB[(SQLite / SQLAlchemy)]
     end
     FSM --> MEM
@@ -63,7 +77,10 @@ flowchart LR
     LLM --> DEBATE
     DEBATE --> BUS
     FSM --> JAIL --> LLM
+    JAIL --> SCOPE
+    FINDINGS --> DB
     MEM --> DB
+    SCOPE --> DB
     API[Health & Metrics API] -.-> DB
     CLI[CLI] --> Coordinator
 ```
@@ -77,7 +94,9 @@ CLI (ultron.cli)
        ├─ BudgetGovernor (ultron.budget)       token/RPM/RPD limits
        ├─ GoogleAIClient (ultron.llm)          httpx + key rotation + retries
        ├─ DebateProtocol (ultron.debate)       attacker vs defender
-       ├─ SafetyJail (ultron.safety)           scope + command filtering
+       ├─ SafetyJail (ultron.safety)           metachars + denylist + host scope
+       ├─ ScopeManager (ultron.scope)          lateral-movement approvals
+       ├─ FindingStore (ultron.vulns)          CVSS 3.1 + deduped findings
        └─ DatabaseManager (ultron.db)          ORM models / SQLite fallback
 ```
 
@@ -211,7 +230,7 @@ accounts. Install dependencies using the pinned commands in the installation
 section, then run:
 
 ```bash
-pytest                                      # full offline suite (151 tests)
+pytest                                      # full offline suite (250 tests)
 pytest --cov=ultron --cov-report=term-missing --cov-fail-under=85
 flake8 ultron-v6/ultron ultron-v6/ultron_v6.py tests
 mypy ultron-v6/ultron ultron-v6/ultron_v6.py
@@ -248,10 +267,12 @@ CI runs the same gates on every push and pull request
     │   ├── db.py                   # ORM models / SQLite fallback
     │   ├── memory.py               # vector memory
     │   ├── json_utils.py           # tolerant JSON parsing
-    │   ├── safety.py               # scope + command jail
+    │   ├── safety.py               # metachar/denylist/host-scope jail
+    │   ├── scope.py                # lateral-movement approval flow
     │   ├── llm.py                  # Gemini client (httpx, retries)
     │   ├── debate.py               # multi-agent debate
-    │   ├── coordinator.py          # FSM-driven pipeline
+    │   ├── vulns.py                # CVSS 3.1 engine + finding store
+    │   ├── coordinator.py          # FSM-driven iterative agent loop
     │   ├── api.py                  # health/metrics server
     │   └── cli.py                  # command line interface
     ├── ultron_v6.py                # backwards-compatible entry module
@@ -266,12 +287,16 @@ CI runs the same gates on every push and pull request
 ULTRON includes multiple safety layers:
 
 1. **System-prompt jail** — the LLM is forced into an authorized-testing context
-2. **Safety jail** — blocks destructive patterns (e.g. `rm -rf /`,
-   reverse shells) and out-of-scope IPs
-3. **Scope validation** — every IP literal in a command must be authorized
-4. **Multi-agent debate** — destructive actions require adversarial approval
-5. **Budget guardrails** — prevents runaway API cost
-6. **Secure defaults** — metrics server binds localhost by default,
+2. **Safety jail** — shell-metacharacter blocklist (`; | & \` $ < >`),
+   denylist of destructive patterns (e.g. `rm -rf /`, reverse shells)
+3. **Scope validation** — every IP literal, URL host and FQDN in a command
+   must be authorized; the discovery scan itself is jail-checked
+4. **Scope manager** — newly discovered adjacent assets enter a
+   depth-limited approval queue (`LATERAL_TARGET_FOUND` events) and are only
+   jail-legal after explicit approval
+5. **Multi-agent debate** — destructive actions require adversarial approval
+6. **Budget guardrails** — prevents runaway API cost
+7. **Secure defaults** — metrics server binds localhost by default,
    tools run without a shell, dependencies are audited in CI
 
 **Always ensure you have written authorization before testing any

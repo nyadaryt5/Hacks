@@ -47,6 +47,7 @@ VALID_TRANSITIONS: dict[AgentState, set[AgentState]] = {
     AgentState.PLANNING: {
         AgentState.AUTHORIZATION,
         AgentState.ANALYSIS,
+        AgentState.REPORTING,  # planner stalled (repeated action); report as-is
         AgentState.ERROR,
         AgentState.TERMINATED,
     },

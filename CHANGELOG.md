@@ -5,15 +5,49 @@ All notable changes to ULTRON v6 are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [6.2.0] - 2026-08-23
 
 ### Added
 
-- Active `.github/workflows/ci.yml` with Python 3.10–3.12 lint, typecheck,
-  85% coverage, Bandit, pip-audit and package-build gates on every push and
-  pull request.
+- **CVSS 3.1 scoring engine** (`ultron/vulns.py`): official base-score
+  equations (ISC/ESC, 1.08x scope-changed multiplier, scope-dependent
+  Privileges-Required weights), severity bands, canonical suggested
+  vectors. Verified against a reference implementation across all 2592
+  base-metric combinations with zero mismatches.
+- **FindingStore** (`ultron/vulns.py`): normalizes raw verification
+  payloads into deduplicated, CVSS-scored `Finding` records and persists
+  them to the `findings` table on both the SQLAlchemy and stdlib-SQLite
+  backends (best-effort).
+- **ScopeManager** (`ultron/scope.py`): lateral-movement approval flow —
+  depth-limited requests, `LATERAL_TARGET_FOUND` events, persistence to
+  `lateral_targets`, and explicit `approve()`/`reject()` before any target
+  becomes jail-legal.
+- **Iterative agent loop** (`ultron/coordinator.py`): the single
+  plan/execute pass is now a bounded plan → authorize → execute → verify
+  loop (`ULTRON_MAX_ITERATIONS`) that stops on success, veto, jail block,
+  token-budget exhaustion, a repeated action, or no new progress. Planning
+  prompts carry executed-action history and the finding count.
+- **Hardened safety jail** (`ultron/safety.py`): shell-metacharacter
+  blocklist (`; | & \` $ < >`), out-of-scope URL hosts and bare FQDNs are
+  now scope-validated (previously only IP literals), empty commands are
+  rejected, and the discovery scan passes through the jail.
+- **FSM**: `PLANNING → REPORTING` edge so a stalled planner can still
+  produce a report (mirrors the plan-vetoed skip).
+- **Report**: Agent Loop, Findings table (severity + CVSS) and Scope
+  sections.
+- **CI**: active `.github/workflows/ci.yml` with Python 3.10–3.12 lint,
+  typecheck, 85% coverage, Bandit, pip-audit and package-build gates on
+  every push and pull request, plus a `lockfile-check` job that runs
+  `make lockfile-check` so pip-compile drift against the committed
+  lockfiles fails CI.
 - Explicit pytest `network` marker; network-dependent tests are opt-in and
   excluded from the default offline suite.
+
+### Changed
+
+- Coverage gate holds at 85%; measured suite coverage is 91.3%
+  (250 offline tests).
+- CONTRIBUTING: PRs must include tests for their behavior change.
 
 ### Fixed
 
