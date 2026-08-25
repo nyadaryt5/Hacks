@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from ultron.budget import BudgetGovernor
 from ultron.db import DatabaseManager
 from ultron.debate import DebateProtocol
+from ultron.errors import capture_exception, init_error_tracking
 from ultron.events import EVENT_BUS, Event, EventBus, EventType
 from ultron.fsm import (
     AgentState,
@@ -70,6 +71,7 @@ class ULTRONCoordinator:
         scope: ScopeManager | None = None,
     ):
         self.settings = settings
+        init_error_tracking()
         self.target = settings.target
         self.session_id = (
             f"ULTRON_{uuid.uuid4().hex[:8]}_{self.target.replace('.', '_')}"
@@ -170,6 +172,7 @@ class ULTRONCoordinator:
 
         except InvalidTransitionError as exc:
             self.tracer.log_event("FSM_ERROR", {"error": str(exc)})
+            capture_exception(exc, session=self.session_id, target=self.target)
             _LOGGER.error("[FSM ERROR] %s", exc)
         except KeyboardInterrupt:
             self.fsm.transition(AgentState.TERMINATED)
@@ -494,6 +497,7 @@ class ULTRONCoordinator:
             return output
         except Exception as exc:  # noqa: BLE001 (tool failures are expected)
             TRACER.end_span(span_id, status="error")
+            capture_exception(exc, command=cmd[:100])
             return str(exc)
 
     def _on_vuln_found(self, event: Event) -> None:

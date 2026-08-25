@@ -4,7 +4,7 @@ PYTEST ?= $(PYTHON) -m pytest
 PACKAGE := ./ultron-v6
 
 .PHONY: install dev test coverage lint typecheck security build \
-        docker-up docker-down docker-test clean
+        docker-up docker-down docker-test lockfile-check clean
 
 install:            ## Install the package from the pinned runtime lockfile
 	$(PIP) install -r "$(PACKAGE)/requirements.lock"

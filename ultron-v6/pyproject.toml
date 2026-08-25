@@ -39,7 +39,25 @@ dev = [
     "pip-tools>=7.0",
 ]
 chroma = ["chromadb>=0.4.0"]
-all = ["chromadb>=0.4.0"]
+secrets = [
+    "boto3>=1.34.0",
+    "hvac>=2.1.0",
+    "google-cloud-secret-manager>=2.20.0",
+]
+observability = [
+    "sentry-sdk>=2.0.0",
+    "structlog>=24.0.0",
+    "python-json-logger>=2.0.0",
+]
+all = [
+    "chromadb>=0.4.0",
+    "boto3>=1.34.0",
+    "hvac>=2.1.0",
+    "google-cloud-secret-manager>=2.20.0",
+    "sentry-sdk>=2.0.0",
+    "structlog>=24.0.0",
+    "python-json-logger>=2.0.0",
+]
 
 [project.scripts]
 ultron-v6 = "ultron.cli:main"

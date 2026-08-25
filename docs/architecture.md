@@ -205,7 +205,22 @@ tracks `lateral_targets` rows through pending → approved, on whichever
 backend is active. Persistence is best-effort: a failing database degrades
 to in-memory state instead of aborting the session.
 
-## 7. Observability
+## 7. Threat model
+
+ULTRON is an LLM that proposes shell commands. The untrusted zone is
+everything the model returns and everything a target sends back. The
+trusted zone is the operator's authorized scope, denylists and budgets.
+
+| Abuse case | Mitigation |
+|------------|------------|
+| **Prompt injection** via banners / scan output steering the model | SafetyJail denylist + scope check on every command; system-prompt jail (`GEMINI_CONTEXT_PREFIX`) |
+| **Scope escape** (scan/exploit an unauthorized host) | `SafetyJail.validate_scope` + `ScopeManager` approval queue; `ULTRON_MAX_LATERAL_DEPTH` |
+| **Destructive command execution** (`rm -rf /`, reverse shells) | `FORBIDDEN_PATTERNS`, `shell=False`, debate protocol veto for `safety_level=destructive` |
+| **API key leakage / wallet drain** | Keys from AWS Secrets Manager / Vault / GCP (`ultron/secrets.py`); never logged; `BudgetGovernor` + `ULTRON_MAX_ITERATIONS` |
+
+Trust boundaries and reporting process: [SECURITY.md](../SECURITY.md).
+
+## 8. Observability
 
 - `Tracer` — span-based tracing: `LLM_CALL`, `TOOL_EXECUTION`,
   `STATE_TRANSITION`, `EVENT_PUBLISHED`, `EVENT_CONSUMED`, `VECTOR_QUERY`,
