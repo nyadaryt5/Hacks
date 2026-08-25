@@ -47,6 +47,14 @@ from ultron.logging_setup import JsonFormatter, configure_logging
 from ultron.memory import VectorMemory
 from ultron.safety import FORBIDDEN_PATTERNS, SafetyJail
 from ultron.tracing import TRACER, Span, SpanType, Tracer
+from ultron.vulns import (  # noqa: F401 (shim re-export)
+    Finding,
+    FindingStore,
+    InvalidVectorError,
+    base_score,
+    score_of_vector,
+    severity_for_score,
+)
 
 if HAS_SQLALCHEMY:  # ORM models only exist when SQLAlchemy is installed
     from ultron.db import (  # noqa: F401
@@ -96,6 +104,12 @@ __all__ = [
     "VALID_TRANSITIONS",
     "VectorMemory",
     "__version__",
+    "Finding",
+    "FindingStore",
+    "InvalidVectorError",
+    "base_score",
+    "score_of_vector",
+    "severity_for_score",
     "configure_logging",
     "load_settings",
     "main",

@@ -15,6 +15,7 @@ safety        scope validation and destructive-command jail
 llm           Google AI (Gemini) client with key rotation
 debate        multi-agent debate protocol
 coordinator   FSM-driven orchestration of the pentest phases
+vulns         CVSS 3.1 scoring engine + persistent finding store
 cli           command line interface
 api           health and Prometheus metrics HTTP endpoints
 """
@@ -54,6 +55,14 @@ from ultron.logging_setup import JsonFormatter, configure_logging
 from ultron.memory import VectorMemory
 from ultron.safety import FORBIDDEN_PATTERNS, SafetyJail
 from ultron.tracing import TRACER, Span, SpanType, Tracer
+from ultron.vulns import (
+    Finding,
+    FindingStore,
+    InvalidVectorError,
+    base_score,
+    score_of_vector,
+    severity_for_score,
+)
 
 if HAS_SQLALCHEMY:  # pragma: no branch
     from ultron.db import (  # noqa: F401
@@ -103,6 +112,12 @@ __all__ = [
     "VALID_TRANSITIONS",
     "VectorMemory",
     "__version__",
+    "Finding",
+    "FindingStore",
+    "InvalidVectorError",
+    "base_score",
+    "score_of_vector",
+    "severity_for_score",
     "configure_logging",
     "load_settings",
     "parse_json_response",
