@@ -17,6 +17,8 @@ flowchart TB
         LLM["GoogleAIClient"]
         DEBATE["DebateProtocol"]
         JAIL["SafetyJail"]
+        SCOPE["ScopeManager"]
+        FINDINGS["FindingStore / CVSS 3.1"]
         DB["DatabaseManager"]
         TRACER["Tracer"]
     end
@@ -30,6 +32,9 @@ flowchart TB
     LLM --> DEBATE
     DEBATE --> BUS
     FSM --> JAIL
+    JAIL --> SCOPE
+    SCOPE --> DB
+    FINDINGS --> DB
     MEM --> DB
     BUS --> TRACER
     LLM --> TRACER
@@ -49,8 +54,10 @@ stateDiagram-v2
     PLANNING --> AUTHORIZATION
     AUTHORIZATION --> EXECUTION
     AUTHORIZATION --> REPORTING : plan vetoed
+    PLANNING --> REPORTING : planner stalled
     EXECUTION --> VERIFICATION
     VERIFICATION --> REPORTING
+    VERIFICATION --> PLANNING : more progress possible
     REPORTING --> COMPLETE
     COMPLETE --> [*]
 
@@ -99,31 +106,52 @@ sequenceDiagram
     L->>B: check_budget / record_usage
     L-->>C: services + vulnerabilities
 
-    C->>F: transition(PLANNING)
-    C->>L: chat(plan next action)
-    L-->>C: action plan
+    loop agent loop (up to ULTRON_MAX_ITERATIONS)
+        C->>F: transition(PLANNING)
+        C->>L: chat(plan next action, executed history)
+        L-->>C: action plan
+        alt action already executed
+            Note over C: break to REPORTING (PLANNING -> REPORTING)
+        end
 
-    C->>F: transition(AUTHORIZATION)
-    alt plan.safety_level == destructive
-        C->>D: debate(plan, context)
-        D->>L: attacker chat
-        D->>L: defender chat
-        D->>L: judge chat
-        D-->>C: verdict
-        C->>E: publish(DEBATE_COMPLETED)
-    end
+        C->>F: transition(AUTHORIZATION)
+        alt plan.safety_level == destructive
+            C->>D: debate(plan, context)
+            D->>L: attacker chat
+            D->>L: defender chat
+            D->>L: judge chat
+            D-->>C: verdict
+            C->>E: publish(DEBATE_COMPLETED)
+        end
 
-    alt authorized
-        C->>F: transition(EXECUTION)
-        C->>J: filter_command(action)
-        C->>C: execute tool (temp dir, no shell)
-        C->>F: transition(VERIFICATION)
-        C->>L: chat(verify result)
-        C->>E: publish(VULNERABILITY_FOUND, ...)
+        alt authorized
+            C->>F: transition(EXECUTION)
+            C->>J: filter_command(action)
+            alt jail blocks
+                C->>E: publish(ERROR_OCCURRED)
+                Note over C: break to REPORTING
+            else
+                C->>C: execute tool (temp dir, no shell)
+                C->>F: transition(VERIFICATION)
+                C->>L: chat(verify result)
+                C->>F: record finding (CVSS 3.1, deduped, persisted)
+                C->>E: publish(VULNERABILITY_FOUND, ...)
+                alt result mentions lateral_target
+                    C->>C: scope.request(target)
+                    C->>E: publish(LATERAL_TARGET_FOUND)
+                    Note over C: approval required before jail-legal
+                end
+                alt success, budget exceeded, no progress
+                    Note over C: break to REPORTING
+                end
+            end
+        else vetoed
+            Note over C: break to REPORTING (AUTHORIZATION -> REPORTING)
+        end
     end
 
     C->>F: transition(REPORTING)
-    C->>C: write ULTRON_V6_REPORT_*.md
+    C->>C: write ULTRON_V6_REPORT_*.md (findings, scope, budget, history)
     C->>F: transition(COMPLETE)
 ```
 
@@ -144,11 +172,19 @@ HTTP 429.
 ## 5. Safety layers
 
 1. **Prompt jail** — the LLM system prompt pins an authorized-testing context.
-2. **SafetyJail.filter_command** — blocks denylisted destructive patterns
-   (`rm -rf /`, reverse shells, writes to `/etc`, ...) and any IP literal
-   outside the authorized scope.
-3. **Execution hygiene** — `shlex.split` + `shell=False` + system temp dir.
-4. **Debate veto** — destructive plans require attacker/defender/judge
+2. **Shell-metacharacter blocklist** — `; | & \` $ < >` and newlines are
+   refused outright: the executor uses `shell=False`, so these characters
+   can never do useful work and are the main prompt-injection chaining
+   vector.
+3. **SafetyJail.filter_command** — blocks denylisted destructive patterns
+   (`rm -rf /`, reverse shells, writes to `/etc`, ...) and any IP literal,
+   URL host or bare FQDN outside the authorized scope.
+4. **Execution hygiene** — `shlex.split` + `shell=False` + system temp dir;
+   the discovery scan is jail-checked too.
+5. **Scope manager** — adjacent assets discovered during verification enter
+   a depth-limited approval queue (`LATERAL_TARGET_FOUND` events, persisted
+   to `lateral_targets`) and only become jail-legal via `approve()`.
+6. **Debate veto** — destructive plans require attacker/defender/judge
    approval before execution.
 
 ## 6. Persistence
@@ -162,6 +198,12 @@ HTTP 429.
 `VectorMemory` stores lessons in both the vector store (ChromaDB, or an
 in-memory 128-dim hash embedding with cosine similarity) and the
 relational database.
+
+`FindingStore` (ultron/vulns.py) writes every deduplicated finding to the
+`findings` table (with CVSS vector/score) and `ScopeManager` (ultron/scope.py)
+tracks `lateral_targets` rows through pending → approved, on whichever
+backend is active. Persistence is best-effort: a failing database degrades
+to in-memory state instead of aborting the session.
 
 ## 7. Observability
 

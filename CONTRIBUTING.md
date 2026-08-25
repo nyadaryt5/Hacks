@@ -36,6 +36,8 @@ CI runs the same checks on every push and PR
 ## Pull requests
 
 - Reference the issue you're fixing.
+- **Each PR must include tests for its behavior change** — new public
+  behavior ships with the tests that pin it in the same commit.
 - Keep the diff focused; no bulk formatting mixed with features.
 - Wait for CI to pass before requesting review.
 

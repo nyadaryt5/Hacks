@@ -21,7 +21,7 @@ cli           command line interface
 api           health and Prometheus metrics HTTP endpoints
 """
 
-__version__ = "6.1.1"
+__version__ = "6.2.0"
 
 from ultron.api import METRICS, MetricsRegistry, serve_forever, start_server
 from ultron.budget import BudgetGovernor
