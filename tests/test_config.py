@@ -78,6 +78,8 @@ def test_env_example_documents_required_keys():
         "ULTRON_BUDGET_MAX_COST_PER_SESSION_USD",
         "ULTRON_BUDGET_WARN_AT_PERCENT",
         "ULTRON_DB_URL",
+        "ULTRON_SECRETS_BACKEND",
+        "ULTRON_SENTRY_DSN",
     ):
         assert name in example, name
 

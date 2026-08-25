@@ -10,7 +10,9 @@ from ultron import __version__
 from ultron.api import serve_forever
 from ultron.config import ConfigurationError, load_settings
 from ultron.coordinator import _BANNER, ULTRONCoordinator
+from ultron.errors import init_error_tracking
 from ultron.logging_setup import configure_logging
+from ultron.secrets import resolve_google_api_key
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     configure_logging(level=args.log_level, json_format=args.json_logs)
+    init_error_tracking()
+    resolve_google_api_key()
 
     if args.command == "serve":
         serve_forever(host=args.host, port=args.port)
