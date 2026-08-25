@@ -1,9 +1,13 @@
 """FSM-driven orchestration of the pentest phases.
 
 :class:`ULTRONCoordinator` wires the FSM, event bus, vector memory, budget
-governor, LLM client, debate protocol and safety jail together, and drives
-the seven pentest phases to a final markdown report. Every dependency is
-injectable so the whole pipeline can be exercised without network access.
+governor, LLM client, debate protocol, safety jail, scope manager and
+finding store together, and drives the pentest phases to a final markdown
+report. The core of the run is a *bounded agent loop* (plan → authorize →
+execute → verify) that keeps iterating while the verifier reports new
+progress and stops on success, veto, jail block, budget exhaustion or a
+repeated action. Every dependency is injectable so the whole pipeline can
+be exercised without network access.
 """
 
 from __future__ import annotations
@@ -32,7 +36,9 @@ from ultron.json_utils import parse_json_response
 from ultron.llm import GoogleAIClient
 from ultron.memory import VectorMemory
 from ultron.safety import SafetyJail
+from ultron.scope import ScopeManager
 from ultron.tracing import TRACER, SpanType, Tracer
+from ultron.vulns import FindingStore
 
 if TYPE_CHECKING:  # pragma: no cover
     from ultron.config import ULTRONSettings
@@ -60,6 +66,8 @@ class ULTRONCoordinator:
         debate: DebateProtocol | None = None,
         event_bus: EventBus | None = None,
         tracer: Tracer | None = None,
+        findings: FindingStore | None = None,
+        scope: ScopeManager | None = None,
     ):
         self.settings = settings
         self.target = settings.target
@@ -95,6 +103,28 @@ class ULTRONCoordinator:
         except ValueError:
             pass
         self.jail = SafetyJail(self.allowed_targets, self.allowed_networks)
+        self.scope = (
+            scope
+            if scope is not None
+            else ScopeManager(
+                self.jail,
+                self.event_bus,
+                db=self.db,
+                session_id=self.session_id,
+                max_lateral_depth=getattr(settings, "max_lateral_depth", 2),
+            )
+        )
+        self.findings = (
+            findings
+            if findings is not None
+            else FindingStore(
+                self.db, target=self.target, session_id=self.session_id
+            )
+        )
+
+        # Agent loop state
+        self.iterations = 0
+        self._executed_actions: set[str] = set()
 
         # FSM
         self.fsm = FiniteStateMachine("coordinator")
@@ -128,18 +158,7 @@ class ULTRONCoordinator:
             self.fsm.transition(AgentState.ANALYSIS)
             self._run_analysis()
 
-            self.fsm.transition(AgentState.PLANNING)
-            plan = self._run_planning()
-
-            self.fsm.transition(AgentState.AUTHORIZATION)
-            authorized = self._run_authorization(plan)
-
-            if authorized:
-                self.fsm.transition(AgentState.EXECUTION)
-                results = self._run_execution(plan)
-
-                self.fsm.transition(AgentState.VERIFICATION)
-                self._run_verification(results)
+            self._run_agent_loop()
 
             self.fsm.transition(AgentState.REPORTING)
             self._run_reporting()
@@ -158,6 +177,65 @@ class ULTRONCoordinator:
         finally:
             self.close()
 
+    # -- agent loop ---------------------------------------------------------
+
+    def _run_agent_loop(self) -> None:
+        """Bounded plan → authorize → execute → verify loop.
+
+        Stops when the goal is achieved (verification success), the plan is
+        vetoed, execution is jail-blocked, the token budget is exhausted,
+        the planner repeats a previously executed action, no new progress
+        is made, or ``max_iterations`` is reached.
+        """
+        max_iterations = max(1, int(getattr(self.settings, "max_iterations", 30)))
+
+        for _ in range(max_iterations):
+            self.iterations += 1
+            self.fsm.transition(AgentState.PLANNING)
+            plan = self._run_planning(self.iterations)
+            action_key = self._action_key(plan)
+            if action_key in self._executed_actions:
+                _LOGGER.info(
+                    "Planner repeated action %r; ending agent loop.",
+                    action_key,
+                )
+                break
+
+            self.fsm.transition(AgentState.AUTHORIZATION)
+            if not self._run_authorization(plan):
+                _LOGGER.info("Plan vetoed at authorization; ending agent loop.")
+                break
+
+            self.fsm.transition(AgentState.EXECUTION)
+            results, blocked = self._run_execution(plan)
+            self._executed_actions.add(action_key)
+
+            self.fsm.transition(AgentState.VERIFICATION)
+            progress, success = self._run_verification(results)
+
+            if success:
+                _LOGGER.info("Verification reports success; goal achieved.")
+                break
+            if blocked:
+                _LOGGER.info("Execution blocked by safety jail; ending loop.")
+                break
+            if not progress:
+                _LOGGER.info("No new progress from verification; ending loop.")
+                break
+            if self.budget.budget_exceeded:
+                _LOGGER.warning("Token budget exceeded; ending agent loop.")
+                break
+            # Otherwise continue: VERIFICATION -> PLANNING is a legal
+            # FSM transition, so the next cycle plans from fresh context.
+
+    @staticmethod
+    def _action_key(plan: dict[str, Any]) -> str:
+        """Canonical form of a plan's action, used for repeat detection."""
+        action = plan.get("action", "") if isinstance(plan, dict) else str(plan)
+        return str(action).strip().lower()
+
+    # -- phases -------------------------------------------------------------
+
     def _run_discovery(self) -> None:
         """Phase 1: Run reconnaissance tools."""
         self.tracer.log_event(
@@ -166,7 +244,12 @@ class ULTRONCoordinator:
         print(_phase_header("PHASE 1: DISCOVERY"))
 
         cmd = f"nmap -sT -T4 --top-ports 100 --open {self.target}"
-        output = self._execute_tool(cmd)
+        ok, reason = self.jail.filter_command(cmd)
+        if not ok:
+            _LOGGER.warning("Discovery command blocked by jail: %s", reason)
+            output = f"[BLOCKED] {reason}"
+        else:
+            output = self._execute_tool(cmd)
         print(f"  [DISCOVERY] {output[:200]}...")
 
         self.vector_memory.store_lesson(
@@ -199,10 +282,10 @@ class ULTRONCoordinator:
         if parsed:
             print(f"  [ANALYSIS] {json.dumps(parsed, default=str)[:200]}")
 
-    def _run_planning(self) -> dict[str, Any]:
+    def _run_planning(self, iteration: int) -> dict[str, Any]:
         """Phase 3: AI plans next action."""
-        self.tracer.log_event("PHASE", {"phase": "PLANNING"})
-        print(_phase_header("PHASE 3: PLANNING"))
+        self.tracer.log_event("PHASE", {"phase": "PLANNING", "iteration": iteration})
+        print(_phase_header(f"PHASE 3: PLANNING (iteration {iteration})"))
 
         system = (
             "Plan next pentesting action. JSON only:\n"
@@ -210,7 +293,13 @@ class ULTRONCoordinator:
             '"command", "parameters": {}, "expected_outcome": "...", '
             '"safety_level": "safe|destructive"}'
         )
-        user = f"Target: {self.target}. Plan next action based on discovery."
+        executed = sorted(self._executed_actions)
+        user = (
+            f"Target: {self.target}. Plan next action based on discovery.\n"
+            f"Iteration: {iteration}.\n"
+            f"Already executed: {executed if executed else 'none'}\n"
+            f"Findings so far: {len(self.findings.all())}"
+        )
 
         response = self.llm.chat(system, user)
         plan = parse_json_response(response)
@@ -250,8 +339,8 @@ class ULTRONCoordinator:
         print("  [AUTH] Safe action, proceeding.")
         return True
 
-    def _run_execution(self, plan: dict[str, Any]) -> str:
-        """Phase 5: Execute the planned action."""
+    def _run_execution(self, plan: dict[str, Any]) -> tuple[str, bool]:
+        """Phase 5: Execute the planned action. Returns (output, blocked)."""
         self.tracer.log_event("PHASE", {"phase": "EXECUTION"})
         print(_phase_header("PHASE 5: EXECUTION"))
 
@@ -266,36 +355,61 @@ class ULTRONCoordinator:
         ok, reason = self.jail.filter_command(safe_action)
         if not ok:
             print(f"  [JAIL] {reason}")
-            return f"[BLOCKED] {reason}"
+            self.event_bus.publish(
+                EventType.ERROR_OCCURRED,
+                {"phase": "execution", "reason": reason, "command": safe_action[:200]},
+                "safety_jail",
+            )
+            return f"[BLOCKED] {reason}", True
 
         output = self._execute_tool(safe_action)
         print(f"  [EXEC] {output[:200]}...")
-        return output
+        return output, False
 
-    def _run_verification(self, results: str) -> None:
-        """Phase 6: Verify execution results."""
+    def _run_verification(self, results: str) -> tuple[bool, bool]:
+        """Phase 6: Verify execution results. Returns (progress, success)."""
         self.tracer.log_event("PHASE", {"phase": "VERIFICATION"})
         print(_phase_header("PHASE 6: VERIFICATION"))
 
         system = (
             'Verify execution result. JSON: {"success": true/false, '
-            '"confidence": 0.0-1.0, "findings": [...]}'
+            '"confidence": 0.0-1.0, "findings": [...], '
+            '"lateral_target": "..."}'
         )
         response = self.llm.chat(system, f"Result: {results[:2000]}")
         parsed = parse_json_response(response)
 
-        if parsed:
-            print(
-                f"  [VERIFY] Success: {parsed.get('success')} | "
-                f"Confidence: {parsed.get('confidence')}"
-            )
-            if parsed.get("findings"):
-                for finding in parsed["findings"]:
+        progress = False
+        success = False
+        if isinstance(parsed, dict):
+            success = bool(parsed.get("success"))
+            findings = parsed.get("findings") or []
+            if isinstance(findings, (str, int, float)):
+                findings = [findings]
+            for item in findings:
+                finding, is_new = self.findings.record(item, phase="VERIFICATION")
+                if is_new:
+                    progress = True
                     self.event_bus.publish(
                         EventType.VULNERABILITY_FOUND,
-                        finding,
+                        finding.to_payload(),
                         "verification",
                     )
+            lateral = parsed.get("lateral_target")
+            if lateral:
+                decision = self.scope.request(
+                    str(lateral),
+                    evidence=str(parsed.get("lateral_evidence", ""))[:200],
+                    source="verification",
+                )
+                print(f"  [SCOPE] {decision['status']}: {decision['target']}")
+                if decision["status"] == "pending":
+                    progress = True
+            print(
+                f"  [VERIFY] Success: {success} | "
+                f"Confidence: {parsed.get('confidence')}"
+            )
+        return progress, success
 
     def _run_reporting(self) -> None:
         """Phase 7: Generate final report."""
@@ -320,9 +434,30 @@ class ULTRONCoordinator:
             f"Target: {self.target}\n"
             f"Session: {self.session_id}\n"
             f"Date: {datetime.now().isoformat()}\n"
+            "\n## Agent Loop\n"
+            f"Iterations: {self.iterations}\n"
+            f"Actions executed: {len(self._executed_actions)}\n"
             "\n## Budget Status\n"
             f"Tokens Used: {tokens_used}/{max_tokens}\n"
             f"Usage: {usage:.1f}%\n"
+            "\n## Findings\n"
+        )
+        findings = self.findings.all()
+        if findings:
+            report += f"{len(findings)} recorded:\n\n"
+            report += "| # | Severity | CVSS | Title |\n"
+            report += "|---|----------|------|-------|\n"
+            for row in self.findings.report_rows():
+                report += f"| {' | '.join(row)} |\n"
+        else:
+            report += "None recorded.\n"
+
+        scope_summary = self.scope.summary()
+        report += (
+            "\n## Scope\n"
+            f"Authorized: {', '.join(scope_summary['authorized'])}\n"
+            f"Pending lateral: "
+            f"{', '.join(scope_summary['pending']) or 'none'}\n"
             "\n## Trace Summary\n"
             f"Total Spans: {total_spans}\n"
             f"Total Tokens: {total_tokens}\n"

@@ -85,6 +85,15 @@ def test_authorization_can_skip_to_reporting_when_plan_aborted(fsm):
     assert fsm.current_state == AgentState.REPORTING
 
 
+def test_planning_can_skip_to_reporting_when_planner_stalls(fsm):
+    """A stalled planner (repeated action) must report without an FSM error."""
+    fsm.transition(AgentState.DISCOVERY)
+    fsm.transition(AgentState.ANALYSIS)
+    fsm.transition(AgentState.PLANNING)
+    assert fsm.transition(AgentState.REPORTING) is True
+    assert fsm.current_state == AgentState.REPORTING
+
+
 def test_every_referenced_state_exists():
     names = {state.name for state in AgentState}
     for state, targets in VALID_TRANSITIONS.items():

@@ -212,3 +212,158 @@ def test_execute_tool_truncates_long_output(settings, tmp_path, monkeypatch):
     output = coord._execute_tool("echo hi")
     assert "[TRUNCATED]" in output
     assert len(output) < 4200
+
+
+class TestAgentLoop:
+    """Behavior of the bounded plan/authorize/execute/verify loop."""
+
+    def _fake_run(self, monkeypatch, out="ok"):
+        monkeypatch.setattr(
+            "ultron.coordinator.subprocess.run",
+            lambda *a, **k: type("R", (), {"stdout": out, "stderr": ""})(),
+        )
+
+    def test_loop_continues_while_findings_are_new(
+        self, settings, tmp_path, monkeypatch
+    ):
+        plan2 = dict(PLAN_SAFE, action="nmap -sV ${target}")
+        responses = [
+            "{}",  # analysis
+            json.dumps(PLAN_SAFE),  # iteration 1 plan
+            (
+                '{"success": false, "confidence": 0.5, "findings": '
+                '[{"title": "banner leak", "severity": "medium"}]}'
+            ),
+            json.dumps(plan2),  # iteration 2 plan
+            '{"success": true, "confidence": 0.9}',
+        ]
+        coord = make_coordinator(settings, tmp_path, monkeypatch, responses)
+        self._fake_run(monkeypatch)
+        coord.launch()
+
+        assert coord.fsm.current_state == AgentState.COMPLETE
+        assert coord.iterations == 2
+        planings = [
+            new for _, new, _ in coord.fsm.history if new == AgentState.PLANNING
+        ]
+        executions = [
+            new for _, new, _ in coord.fsm.history if new == AgentState.EXECUTION
+        ]
+        assert len(planings) == 2
+        assert len(executions) == 2
+
+        findings = coord.findings.all()
+        assert len(findings) == 1
+        assert findings[0].severity == "medium"
+        assert findings[0].cvss_score is not None
+        assert findings[0].target == "192.0.2.10"
+
+        report = tmp_path.glob("ULTRON_V6_REPORT_*.md")
+        content = next(iter(report)).read_text()
+        assert "## Findings" in content
+        assert "banner leak" in content
+        assert "## Scope" in content
+        assert "## Agent Loop" in content
+
+    def test_loop_stops_when_planner_repeats_an_action(
+        self, settings, tmp_path, monkeypatch
+    ):
+        responses = [
+            "{}",
+            json.dumps(PLAN_SAFE),
+            '{"success": false, "findings": [{"title": "x", "severity": "low"}]}',
+            json.dumps(PLAN_SAFE),  # identical action proposed again
+        ]
+        coord = make_coordinator(settings, tmp_path, monkeypatch, responses)
+        self._fake_run(monkeypatch)
+        coord.launch()
+
+        assert coord.fsm.current_state == AgentState.COMPLETE
+        assert coord.iterations == 2
+        executions = [
+            new for _, new, _ in coord.fsm.history if new == AgentState.EXECUTION
+        ]
+        # The repeated plan was rejected before authorization/execution.
+        assert len(executions) == 1
+
+    def test_loop_respects_max_iterations(self, settings, tmp_path, monkeypatch):
+        plan2 = dict(PLAN_SAFE, action="nmap -sV ${target}")
+        responses = [
+            "{}",
+            json.dumps(PLAN_SAFE),
+            '{"success": false, "findings": [{"title": "a", "severity": "low"}]}',
+            json.dumps(plan2),
+            '{"success": false, "findings": [{"title": "b", "severity": "low"}]}',
+        ]
+        coord = make_coordinator(settings, tmp_path, monkeypatch, responses)
+        coord.settings.max_iterations = 2
+        self._fake_run(monkeypatch)
+        coord.launch()
+
+        assert coord.fsm.current_state == AgentState.COMPLETE
+        assert coord.iterations == 2
+        assert len(coord.findings.all()) == 2
+
+    def test_lateral_target_becomes_pending_scope(
+        self, settings, tmp_path, monkeypatch
+    ):
+        plan2 = dict(PLAN_SAFE, action="nmap -sV ${target}")
+        responses = [
+            "{}",
+            json.dumps(PLAN_SAFE),
+            (
+                '{"success": false, "findings": [], '
+                '"lateral_target": "192.168.99.9"}'
+            ),
+            json.dumps(plan2),
+            '{"success": true, "findings": []}',
+        ]
+        coord = make_coordinator(settings, tmp_path, monkeypatch, responses)
+        self._fake_run(monkeypatch)
+        coord.launch()
+
+        assert coord.fsm.current_state == AgentState.COMPLETE
+        assert "192.168.99.9" in coord.scope.pending
+        events = coord.event_bus.get_events(EventType.LATERAL_TARGET_FOUND)
+        assert events[0].payload["status"] == "pending"
+        # The report (written before any approval) lists it as pending.
+        content = next(iter(tmp_path.glob("ULTRON_V6_REPORT_*.md"))).read_text()
+        assert "Pending lateral: 192.168.99.9" in content
+        # Operator approval makes the target jail-legal.
+        assert coord.scope.approve("192.168.99.9") is True
+        assert coord.jail.validate_scope("192.168.99.9") is True
+
+    def test_budget_exhaustion_stops_the_loop(self, settings, tmp_path, monkeypatch):
+        responses = [
+            "{}",
+            json.dumps(PLAN_SAFE),
+            '{"success": false, "findings": [{"title": "x", "severity": "low"}]}',
+        ]
+        coord = make_coordinator(settings, tmp_path, monkeypatch, responses)
+        coord.budget.budget_exceeded = True
+        self._fake_run(monkeypatch)
+        coord.launch()
+
+        assert coord.fsm.current_state == AgentState.COMPLETE
+        assert coord.iterations == 1
+
+    def test_discovery_command_goes_through_the_jail(
+        self, settings, tmp_path, monkeypatch
+    ):
+        coord = make_coordinator(
+            settings, tmp_path, monkeypatch,
+            ["{}", json.dumps(PLAN_SAFE), "{}"],
+        )
+
+        def _blocked(cmd: str) -> tuple[bool, str]:
+            # Force the discovery command to be blocked; the run must
+            # survive and the tool executor must not be invoked.
+            return False, "BLOCKED: test"
+
+        coord.jail.filter_command = _blocked  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "ultron.coordinator.subprocess.run",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")),
+        )
+        coord.launch()
+        assert coord.fsm.current_state == AgentState.COMPLETE
