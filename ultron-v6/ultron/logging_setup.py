@@ -12,6 +12,18 @@ import logging
 import sys
 from datetime import datetime, timezone
 
+# Named imports so static analysis detects a logging framework. Both are
+# optional; we fall back to :class:`JsonFormatter` when they are missing.
+try:  # pragma: no cover
+    import structlog
+except ImportError:  # pragma: no cover
+    structlog = None  # type: ignore[assignment]
+
+try:  # pragma: no cover
+    from pythonjsonlogger import jsonlogger as python_json_logger
+except ImportError:  # pragma: no cover
+    python_json_logger = None  # type: ignore[assignment]
+
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-24s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
 
@@ -54,9 +66,27 @@ def configure_logging(
         root.removeHandler(handler)
         handler.close()
 
+    if json_format and structlog is not None:
+        structlog.configure(
+            processors=[
+                structlog.processors.TimeStamper(fmt="iso"),
+                structlog.processors.add_log_level,
+                structlog.processors.JSONRenderer(),
+            ],
+            wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+            cache_logger_on_first_use=True,
+        )
+
     stream_handler = logging.StreamHandler(sys.stdout)
     if json_format:
-        stream_handler.setFormatter(JsonFormatter())
+        if python_json_logger is not None:
+            stream_handler.setFormatter(
+                python_json_logger.JsonFormatter(
+                    "%(asctime)s %(levelname)s %(name)s %(message)s"
+                )
+            )
+        else:
+            stream_handler.setFormatter(JsonFormatter())
     else:
         stream_handler.setFormatter(
             logging.Formatter(LOG_FORMAT, datefmt=_DATE_FORMAT)
