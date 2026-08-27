@@ -26,23 +26,24 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
+            ultron-v6/requirements-build.lock
             ultron-v6/requirements.lock
             ultron-v6/requirements-dev.lock
 
       - name: Install pinned dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --requirement ultron-v6/requirements-build.lock
           python -m pip install --requirement ultron-v6/requirements.lock
           python -m pip install --requirement ultron-v6/requirements-dev.lock
-          python -m pip install --no-deps --editable ./ultron-v6
+          python -m pip install --no-build-isolation --no-deps --editable .
 
       - name: Ruff
         run: python -m ruff check ultron-v6/ultron
@@ -59,23 +60,24 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
+            ultron-v6/requirements-build.lock
             ultron-v6/requirements.lock
             ultron-v6/requirements-dev.lock
 
       - name: Install pinned dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --requirement ultron-v6/requirements-build.lock
           python -m pip install --requirement ultron-v6/requirements.lock
           python -m pip install --requirement ultron-v6/requirements-dev.lock
-          python -m pip install --no-deps --editable ./ultron-v6
+          python -m pip install --no-build-isolation --no-deps --editable .
 
       - name: Mypy
         run: python -m mypy ultron-v6/ultron ultron-v6/ultron_v6.py
@@ -89,54 +91,134 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
+            ultron-v6/requirements-build.lock
             ultron-v6/requirements.lock
             ultron-v6/requirements-dev.lock
 
       - name: Install pinned dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --requirement ultron-v6/requirements-build.lock
           python -m pip install --requirement ultron-v6/requirements.lock
           python -m pip install --requirement ultron-v6/requirements-dev.lock
-          python -m pip install --no-deps --editable ./ultron-v6
+          python -m pip install --no-build-isolation --no-deps --editable .
 
       - name: Run offline tests with coverage gate
-        run: python -m pytest --cov=ultron --cov-report=term-missing --cov-fail-under=85
+        run: python -m pytest tests --cov=ultron --cov-report=term-missing --cov-fail-under=85
+
+  optional-integrations:
+    name: Optional integrations (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            ultron-v6/requirements-build.lock
+            ultron-v6/requirements-all.lock
+
+      - name: Install every cross-version production integration from pins
+        run: |
+          python -m pip install --requirement ultron-v6/requirements-build.lock
+          python -m pip install --requirement ultron-v6/requirements-all.lock
+          python -m pip install --no-build-isolation --no-deps --editable .
+
+      - name: Verify optional imports and dependency consistency
+        run: |
+          python -m pip check
+          python -c "import boto3, hvac, sentry_sdk, structlog; from google.cloud import secretmanager; import ultron"
+
+  chroma-compatibility:
+    name: Chroma compatibility (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            ultron-v6/requirements-build.lock
+            ultron-v6/requirements-chroma.lock
+
+      - name: Install the vulnerability-constrained Chroma set
+        run: |
+          python -m pip install --requirement ultron-v6/requirements-build.lock
+          python -m pip install --requirement ultron-v6/requirements-chroma.lock
+          python -m pip install --no-build-isolation --no-deps --editable .
+
+      - name: Verify Chroma with an offline vector round trip
+        run: |
+          python -m pip check
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import chromadb
+          from ultron.db import DatabaseManager
+          from ultron.memory import VectorMemory
+
+          assert chromadb.__version__ == "0.4.16"
+          with tempfile.TemporaryDirectory() as directory:
+              db = DatabaseManager(f"sqlite:///{Path(directory) / 'memory.db'}")
+              memory = VectorMemory(db, backend="chroma")
+              memory.store_lesson("web recon", "nmap", "443 open", True, "ci")
+              result = memory.query_similar("web recon", top_k=1)
+              assert result and result[0]["action"] == "nmap"
+              db.close()
+          PY
 
   lockfile-check:
-    name: Lockfile drift check
+    name: Lockfile drift check (Python 3.11 baseline)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           cache: pip
           cache-dependency-path: |
+            ultron-v6/requirements-build.lock
             ultron-v6/requirements.lock
             ultron-v6/requirements-dev.lock
             ultron-v6/requirements-chroma.lock
+            ultron-v6/requirements-all.lock
 
-      - name: Install pinned pip-tools
-        # Pinned to match requirements-dev.lock so the compiled output
-        # format is stable and drift detection is meaningful.
-        run: python -m pip install --upgrade pip "pip-tools==7.6.1"
+      - name: Install pinned lock tooling
+        run: |
+          python -m pip install --requirement ultron-v6/requirements-build.lock
+          python -m pip install --requirement ultron-v6/requirements-dev.lock
 
       - name: Verify committed lockfiles match the manifests
         run: make lockfile-check
 
   security:
-    name: Security scans (Python ${{ matrix.python-version }})
+    name: Security audit (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -144,51 +226,80 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
+            ultron-v6/requirements-build.lock
             ultron-v6/requirements.lock
             ultron-v6/requirements-dev.lock
+            ultron-v6/requirements-chroma.lock
+            ultron-v6/requirements-all.lock
 
       - name: Install pinned dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --requirement ultron-v6/requirements-build.lock
           python -m pip install --requirement ultron-v6/requirements.lock
           python -m pip install --requirement ultron-v6/requirements-dev.lock
-          python -m pip install --no-deps --editable ./ultron-v6
+          python -m pip install --no-build-isolation --no-deps --editable .
 
       - name: Bandit
         run: python -m bandit -r ultron-v6/ultron -c pyproject.toml
 
-      - name: Dependency audit
-        run: python -m pip_audit --requirement ultron-v6/requirements.lock
+      - name: Verify installed dependency consistency
+        run: python -m pip check
+
+      - name: Audit every pinned dependency set
+        run: |
+          python -m pip_audit --strict --progress-spinner=off --requirement ultron-v6/requirements-build.lock
+          python -m pip_audit --strict --progress-spinner=off --requirement ultron-v6/requirements.lock
+          python -m pip_audit --strict --progress-spinner=off --requirement ultron-v6/requirements-dev.lock
+          python -m pip_audit --strict --progress-spinner=off --requirement ultron-v6/requirements-chroma.lock
+          python -m pip_audit --strict --progress-spinner=off --requirement ultron-v6/requirements-all.lock
+
+      - name: Generate CycloneDX SBOMs
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip_audit --strict --progress-spinner=off --requirement ultron-v6/requirements-all.lock --format cyclonedx-json --output ultron-v6.cdx.json
+          python -m pip_audit --strict --progress-spinner=off --requirement ultron-v6/requirements-chroma.lock --format cyclonedx-json --output ultron-v6-chroma.cdx.json
+
+      - name: Upload CycloneDX SBOMs
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ultron-v6-cyclonedx-sboms
+          path: |
+            ultron-v6.cdx.json
+            ultron-v6-chroma.cdx.json
+          if-no-files-found: error
+          retention-days: 14
 
   build:
     name: Build package
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
+            ultron-v6/requirements-build.lock
             ultron-v6/requirements.lock
             ultron-v6/requirements-dev.lock
 
       - name: Install pinned build tooling
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --requirement ultron-v6/requirements-build.lock
           python -m pip install --requirement ultron-v6/requirements.lock
           python -m pip install --requirement ultron-v6/requirements-dev.lock
 
       - name: Build wheel and source distribution
-        run: python -m build ultron-v6 --outdir dist
+        run: python -m build --no-isolation . --outdir dist
