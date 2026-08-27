@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Structured JSON logging is now a core runtime dependency: `structlog` and
+  `python-json-logger` moved from the `observability`/`all` extras into the
+  base install, so `--json-logs` always uses the real structured formatter
+  path instead of a stdlib-only fallback; both are pinned in every committed
+  lockfile, including `requirements.lock`.
 - Packaging and dependency metadata now has one scanner-visible source at the
   repository-root `pyproject.toml`; CI performs a real re-resolution and
   byte-comparison drift check plus strict vulnerability audits for build,

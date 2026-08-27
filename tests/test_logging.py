@@ -3,6 +3,8 @@
 import json
 import logging
 
+import pytest
+
 from ultron.config import ConfigurationError, load_settings
 from ultron.logging_setup import JsonFormatter, configure_logging
 
@@ -118,6 +120,60 @@ def test_invalid_config_emits_critical_log_record(caplog):
     assert any(
         "Configuration validation failed" in r.message for r in criticals
     )
+
+
+def test_json_mode_prefers_python_json_logger_formatter():
+    """json mode must not silently degrade to the stdlib-only fallback.
+
+    structlog and python-json-logger are core runtime dependencies, so a
+    default install always exercises the real structured formatter path.
+    """
+    try:
+        from pythonjsonlogger.json import JsonFormatter as RealJsonFormatter
+    except ImportError:  # python-json-logger 2.x layout
+        from pythonjsonlogger.jsonlogger import (  # noqa: F811
+            JsonFormatter as RealJsonFormatter,
+        )
+
+    configure_logging(level="INFO", json_format=True)
+    stream_formatters = [
+        type(handler.formatter)
+        for handler in logging.getLogger().handlers
+        if isinstance(handler, logging.StreamHandler)
+    ]
+    assert RealJsonFormatter in stream_formatters
+
+    # Exercise the installed formatter end to end with the same payload the
+    # smoke test uses, proving the third-party backend emits parseable JSON.
+    record = logging.LogRecord(
+        name="ultron.test",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="structured-backend",
+        args=(),
+        exc_info=None,
+    )
+    payload = json.loads(RealJsonFormatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"
+    ).format(record))
+    assert payload["message"] == "structured-backend"
+    assert payload["levelname"] == "WARNING"
+    assert payload["name"] == "ultron.test"
+
+
+def test_json_mode_configures_structlog_pipeline():
+    """--json-logs must wire the structlog processor pipeline by default."""
+    structlog = pytest.importorskip("structlog")
+
+    configure_logging(level="INFO", json_format=True)
+    assert structlog.is_configured()
+
+    processors = list(structlog.get_config()["processors"])
+    kinds = [type(p).__name__ for p in processors]
+    assert "TimeStamper" in kinds
+    assert "JSONRenderer" in kinds
+    assert any(p is structlog.processors.add_log_level for p in processors)
 
 
 def test_noisy_third_party_loggers_are_quieted():

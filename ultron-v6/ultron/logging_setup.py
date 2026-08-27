@@ -13,19 +13,16 @@ import sys
 from datetime import datetime, timezone
 
 # Named imports so static analysis detects a logging framework. Both are
-# optional; we fall back to :class:`JsonFormatter` when they are missing.
-try:  # pragma: no cover
-    import structlog
-except ImportError:  # pragma: no cover
-    structlog = None
+# core runtime dependencies pinned in ``requirements.lock``; the bundled
+# :class:`JsonFormatter` remains for file sinks and embedding apps.
+import structlog
 
-try:  # pragma: no cover
+try:
     from pythonjsonlogger.json import JsonFormatter as PythonJsonFormatter
-except ImportError:  # pragma: no cover
-    try:  # python-json-logger 2.x/3.x compatibility
-        from pythonjsonlogger.jsonlogger import JsonFormatter as PythonJsonFormatter
-    except ImportError:
-        PythonJsonFormatter = None
+except ImportError:  # pragma: no cover - python-json-logger 2.x layout
+    from pythonjsonlogger.jsonlogger import (  # type: ignore[attr-defined]
+        JsonFormatter as PythonJsonFormatter,
+    )
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-24s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
@@ -69,7 +66,7 @@ def configure_logging(
         root.removeHandler(handler)
         handler.close()
 
-    if json_format and structlog is not None:
+    if json_format:
         structlog.configure(
             processors=[
                 structlog.processors.TimeStamper(fmt="iso"),
@@ -82,14 +79,11 @@ def configure_logging(
 
     stream_handler = logging.StreamHandler(sys.stdout)
     if json_format:
-        if PythonJsonFormatter is not None:
-            stream_handler.setFormatter(
-                PythonJsonFormatter(
-                    "%(asctime)s %(levelname)s %(name)s %(message)s"
-                )
+        stream_handler.setFormatter(
+            PythonJsonFormatter(
+                "%(asctime)s %(levelname)s %(name)s %(message)s"
             )
-        else:
-            stream_handler.setFormatter(JsonFormatter())
+        )
     else:
         stream_handler.setFormatter(
             logging.Formatter(LOG_FORMAT, datefmt=_DATE_FORMAT)
