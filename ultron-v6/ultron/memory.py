@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from typing import Any
 
@@ -18,6 +19,8 @@ from ultron.db import HAS_SQLALCHEMY
 if HAS_SQLALCHEMY:  # pragma: no branch
     from ultron.db import LessonMemoryModel  # noqa: F401
 from ultron.tracing import TRACER, SpanType
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class VectorMemory:
@@ -42,15 +45,28 @@ class VectorMemory:
             return
         try:
             import chromadb  # noqa: PLC0415 (optional dependency)
+            from chromadb.config import Settings  # noqa: PLC0415
 
-            self._chroma_client = chromadb.Client()
-            self._chroma_collection = self._chroma_client.create_collection(
+            self._chroma_client = chromadb.Client(
+                Settings(anonymized_telemetry=False)
+            )
+            self._chroma_collection = self._chroma_client.get_or_create_collection(
                 name="ultron_lessons",
                 metadata={"description": "Pentesting lessons learned"},
             )
             self._use_chromadb = True
             TRACER.log_event("VECTOR_DB_INIT", {"backend": "chromadb"})
-        except ImportError:
+        except Exception as exc:  # noqa: BLE001 (optional native dependency)
+            if self._backend == "chroma":
+                raise RuntimeError(
+                    "Chroma initialization failed "
+                    f"({type(exc).__name__}); use backend='hash' or repair the "
+                    "constrained Chroma installation"
+                ) from None
+            _LOGGER.warning(
+                "Chroma unavailable (%s); using the local hash backend",
+                type(exc).__name__,
+            )
             TRACER.log_event("VECTOR_DB_INIT", {"backend": "hash_fallback"})
 
     def _generate_embedding(self, text: str) -> list[float]:
@@ -94,8 +110,12 @@ class VectorMemory:
         embedding = self._generate_embedding(text)
 
         if self._use_chromadb and self._chroma_collection:
+            # Supply ULTRON's deterministic local embedding explicitly. Letting
+            # Chroma apply its default function would download an ONNX model at
+            # runtime, violating the offline execution boundary.
             self._chroma_collection.add(
                 documents=[text],
+                embeddings=[embedding],
                 metadatas=[
                     {
                         "situation": situation[:200],
@@ -163,7 +183,7 @@ class VectorMemory:
 
         if self._use_chromadb and self._chroma_collection:
             response = self._chroma_collection.query(
-                query_texts=[query], n_results=top_k
+                query_embeddings=[query_embedding], n_results=top_k
             )
             if response and response.get("documents"):
                 for i, doc in enumerate(response["documents"][0]):

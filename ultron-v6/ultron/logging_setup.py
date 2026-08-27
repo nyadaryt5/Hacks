@@ -17,12 +17,15 @@ from datetime import datetime, timezone
 try:  # pragma: no cover
     import structlog
 except ImportError:  # pragma: no cover
-    structlog = None  # type: ignore[assignment]
+    structlog = None
 
 try:  # pragma: no cover
-    from pythonjsonlogger import jsonlogger as python_json_logger
+    from pythonjsonlogger.json import JsonFormatter as PythonJsonFormatter
 except ImportError:  # pragma: no cover
-    python_json_logger = None  # type: ignore[assignment]
+    try:  # python-json-logger 2.x/3.x compatibility
+        from pythonjsonlogger.jsonlogger import JsonFormatter as PythonJsonFormatter
+    except ImportError:
+        PythonJsonFormatter = None
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-24s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
@@ -79,9 +82,9 @@ def configure_logging(
 
     stream_handler = logging.StreamHandler(sys.stdout)
     if json_format:
-        if python_json_logger is not None:
+        if PythonJsonFormatter is not None:
             stream_handler.setFormatter(
-                python_json_logger.JsonFormatter(
+                PythonJsonFormatter(
                     "%(asctime)s %(levelname)s %(name)s %(message)s"
                 )
             )

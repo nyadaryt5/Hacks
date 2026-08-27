@@ -5,6 +5,41 @@ All notable changes to ULTRON v6 are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- Secret-manager selection now fails closed on unknown backends, missing SDKs
+  or configuration, provider errors, and empty payloads; a managed value
+  replaces stale environment state instead of silently falling back to it.
+- Child pentest tools no longer inherit Gemini, Vault, cloud, or telemetry
+  credentials from the coordinator environment.
+- Scope checks now cover ordinary two-label domains and IPv6 literals/URLs.
+- Removed the global Bandit `B101` skip; only the two reviewed subprocess
+  boundaries retain narrow inline suppressions.
+- Constrained optional ChromaDB below the unpatched CVE-2026-45829,
+  CVE-2026-45830, CVE-2026-45831, and CVE-2026-45833 ranges; compatible
+  transitive caps, disabled telemetry, and local embeddings keep its supported
+  Python 3.10/3.11 path offline.
+
+### Changed
+
+- Packaging and dependency metadata now has one scanner-visible source at the
+  repository-root `pyproject.toml`; CI performs a real re-resolution and
+  byte-comparison drift check plus strict vulnerability audits for build,
+  runtime, development, Chroma, and cross-version production-extra sets.
+- Root lockfiles are now regular byte-identical mirrors rather than symlinks,
+  and root/package `.env.example` templates enumerate every setting.
+- CI actions are pinned to immutable SHAs, strict mypy is green again, optional
+  integrations get fresh-install smoke jobs, and CycloneDX SBOM artifacts cover
+  both production dependency graphs.
+
+### Documentation
+
+- Added `THREAT_MODEL.md` with assets, actors, assumptions, trust boundaries,
+  abuse cases, secret failure behavior, residual risks, deployment controls,
+  and a test verification map.
+
 ## [6.2.1] - 2026-08-25
 
 ### Added

@@ -2,18 +2,22 @@ PYTHON ?= python3
 PIP ?= $(PYTHON) -m pip
 PYTEST ?= $(PYTHON) -m pytest
 PACKAGE := ./ultron-v6
+PROJECT := .
 
 .PHONY: install dev test coverage lint typecheck security build \
-        docker-up docker-down docker-test lockfile-check clean
+        docker-up docker-down docker-test lockfiles lockfile-upgrade \
+        lockfile-check clean
 
-install:            ## Install the package from the pinned runtime lockfile
+install:            ## Install from pinned build/runtime lockfiles
+	$(PIP) install -r "$(PACKAGE)/requirements-build.lock"
 	$(PIP) install -r "$(PACKAGE)/requirements.lock"
-	$(PIP) install --no-deps -e "$(PACKAGE)"
+	$(PIP) install --no-build-isolation --no-deps -e "$(PROJECT)"
 
-dev:                ## Install the package from pinned runtime and dev lockfiles
+dev:                ## Install from pinned build/runtime/dev lockfiles
+	$(PIP) install -r "$(PACKAGE)/requirements-build.lock"
 	$(PIP) install -r "$(PACKAGE)/requirements.lock"
 	$(PIP) install -r "$(PACKAGE)/requirements-dev.lock"
-	$(PIP) install --no-deps -e "$(PACKAGE)"
+	$(PIP) install --no-build-isolation --no-deps -e "$(PROJECT)"
 
 test:               ## Run the test suite
 	$(PYTEST) tests
@@ -28,12 +32,16 @@ lint:               ## Run flake8 and ruff
 typecheck:          ## Run strict mypy
 	$(PYTHON) -m mypy ultron-v6/ultron ultron-v6/ultron_v6.py
 
-security:           ## Run bandit and pip-audit
+security:           ## Run Bandit and strict audits for every dependency set
 	$(PYTHON) -m bandit -r ultron-v6/ultron -c pyproject.toml
-	$(PYTHON) -m pip_audit --requirement ultron-v6/requirements.lock
+	@for lock in requirements-build.lock requirements.lock requirements-dev.lock \
+		requirements-chroma.lock requirements-all.lock; do \
+		$(PYTHON) -m pip_audit --strict --progress-spinner=off \
+			--requirement "ultron-v6/$$lock" || exit $$?; \
+	done
 
 build:              ## Build wheel and sdist
-	$(PYTHON) -m build ultron-v6 --outdir dist
+	$(PYTHON) -m build --no-isolation "$(PROJECT)" --outdir dist
 
 docker-up:          ## Start the app with docker compose
 	docker compose up --build -d
@@ -44,10 +52,14 @@ docker-down:        ## Stop the compose stack
 docker-test:        ## Run the test suite inside the container
 	docker compose run --rm test
 
-lockfile-check:     ## Fail if pip-compile would change committed lockfiles
-	cd ultron-v6 && pip-compile --dry-run --quiet --output-file=requirements.lock requirements.in
-	cd ultron-v6 && pip-compile --dry-run --quiet --output-file=requirements-dev.lock requirements-dev.in
-	cd ultron-v6 && pip-compile --dry-run --quiet --output-file=requirements-chroma.lock requirements-chroma.in
+lockfiles:          ## Regenerate locks with Python 3.11, preserving pins
+	$(PYTHON) scripts/lockfiles.py --write
+
+lockfile-upgrade:   ## Upgrade locks with the Python 3.11 baseline
+	$(PYTHON) scripts/lockfiles.py --write --upgrade
+
+lockfile-check:     ## Fail on manifest drift or mismatched root mirrors
+	$(PYTHON) scripts/lockfiles.py --check
 
 clean:              ## Remove build artifacts
 	rm -rf dist build .pytest_cache .mypy_cache .ruff_cache htmlcov coverage.xml

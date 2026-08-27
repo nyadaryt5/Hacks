@@ -14,20 +14,23 @@ services:
       - ultron-data:/data
     restart: unless-stopped
 
-  # Runs the full test suite inside the container.
+  # Runs the hash-pinned offline suite from the Dockerfile's test target.
   # Usage: docker compose run --rm test
   test:
     profiles: ["test"]
     build:
       context: .
       dockerfile: ultron-v6/Dockerfile
-    image: ultron-v6:latest
-    command: >
-      sh -c "pip install --no-cache-dir 'pytest>=7' 'pytest-cov>=4' &&
-             cd /app && pytest tests --cov=ultron --cov-fail-under=85"
+      target: test
+    image: ultron-v6-test:latest
+    command:
+      - tests
+      - --cov=ultron
+      - --cov-report=term-missing
+      - --cov-fail-under=85
     environment:
       GOOGLE_API_KEY: dummy-key-for-tests
-      ULTRON_DB_URL: sqlite:///:memory:
+      ULTRON_DB_URL: "sqlite:///:memory:"
 
 volumes:
   ultron-data:

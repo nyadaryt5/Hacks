@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import shlex
+from urllib.parse import urlsplit
 
 FORBIDDEN_PATTERNS = [
     r"rm\s+-rf\s+/",
@@ -35,13 +37,40 @@ FORBIDDEN_PATTERNS = [
 #: ``shell=False``, so these can never do useful work — refuse them.
 SHELL_METACHARACTERS = re.compile(r"[;|&`$<>\r\n]")
 
-#: Hostnames taken from URL schemes (http/https/ftp/ssh).
-_URL_HOSTS = re.compile(r"(?:https?|ftp|ssh)://([A-Za-z0-9][A-Za-z0-9.-]*)")
+#: URLs whose hostname must be checked independently of paths and ports.
+_URLS = re.compile(r"(?:https?|ftp|ssh)://[^\s]+", re.IGNORECASE)
 
-#: Bare FQDNs (at least two dots) used as bare arguments, e.g. ``nmap host``.
+#: Bare DNS names, including ordinary two-label names such as ``example.com``.
+#: Requiring an alphabetic final label avoids treating version numbers as hosts.
 _FQDNS = re.compile(
-    r"\b([A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*){2,})\b"
+    r"\b([A-Za-z0-9][A-Za-z0-9-]*"
+    r"(?:\.[A-Za-z0-9][A-Za-z0-9-]*)*\.[A-Za-z]{2,63})\b"
 )
+
+
+def _token_ip_literals(cmd: str) -> set[str]:
+    """Extract IPv4/IPv6 literals from shell-free command arguments."""
+    literals: set[str] = set()
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return literals
+    for token in tokens:
+        candidate = token.rsplit("=", maxsplit=1)[-1].strip("'\"(),")
+        if "://" in candidate:
+            continue
+        if candidate.startswith("[") and "]" in candidate:
+            candidate = candidate[1 : candidate.index("]")]
+        elif candidate.count(":") == 1:
+            host, port = candidate.rsplit(":", maxsplit=1)
+            if port.isdigit():
+                candidate = host
+        candidate = candidate.removesuffix("/32").removesuffix("/128")
+        try:
+            literals.add(str(ipaddress.ip_address(candidate)))
+        except ValueError:
+            continue
+    return literals
 
 
 class SafetyJail:
@@ -60,14 +89,23 @@ class SafetyJail:
     def validate_scope(self, target: str) -> bool:
         if not target:
             return True
+        host = target.strip().rstrip(".").lower()
+        if host.startswith("[") and "]" in host:
+            host = host[1 : host.index("]")]
+        elif host.count(":") == 1:
+            possible_host, port = host.rsplit(":", maxsplit=1)
+            if port.isdigit():
+                host = possible_host
         try:
-            ip = ipaddress.ip_address(target.split(":", maxsplit=1)[0])
-            return any(
-                ip in net for net in self.allowed_networks
-            ) or target in self.allowed_targets
+            ip = ipaddress.ip_address(host)
+            return any(ip in net for net in self.allowed_networks) or any(
+                host == allowed.strip().lower()
+                for allowed in self.allowed_targets
+            )
         except ValueError:
             return any(
-                target == allowed or target.endswith("." + allowed)
+                host == allowed.strip().rstrip(".").lower()
+                or host.endswith("." + allowed.strip().rstrip(".").lower())
                 for allowed in self.allowed_targets
             )
 
@@ -84,12 +122,14 @@ class SafetyJail:
                     return False, f"BLOCKED: {pattern}"
             except re.error:
                 continue
-        targets = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", cmd)
-        for target in targets:
+        targets = set(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", cmd))
+        targets.update(_token_ip_literals(cmd))
+        for target in sorted(targets):
             if not self.validate_scope(target):
                 return False, f"BLOCKED: {target} out of scope"
-        for host in _URL_HOSTS.findall(cmd):
-            if not self.validate_scope(host):
+        for raw_url in _URLS.findall(cmd):
+            host = urlsplit(raw_url).hostname
+            if host and not self.validate_scope(host):
                 return False, f"BLOCKED: {host} out of scope"
         for host in _FQDNS.findall(cmd):
             if not self.validate_scope(host):

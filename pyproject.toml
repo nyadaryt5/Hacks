@@ -1,3 +1,97 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ultron-v6"
+description = "Production-Grade Autonomous Pentest Framework"
+readme = "README.md"
+license = "MIT"
+license-files = ["ultron-v6/LICENSE"]
+authors = [{ name = "nyadaryt5" }]
+requires-python = ">=3.10"
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.27.0",
+    "sqlalchemy>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "mypy>=1.0",
+    "flake8>=6.0",
+    "bandit>=1.7",
+    "pip-audit>=2.6",
+    "pip-tools>=7.0,<8.0",
+    "stevedore<5.9.0", # 5.9+ drops Python 3.10
+]
+# ChromaDB 0.4.17+ is excluded until upstream patches CVE-2026-45829,
+# CVE-2026-45830, CVE-2026-45831, and CVE-2026-45833. Its broad transitive
+# bounds are capped at the newest releases that support Python 3.10.
+# This extra is supported on Python 3.10/3.11 only: the last release outside
+# the current unpatched advisory ranges has no Python 3.12 native wheel.
+chroma = [
+    "chromadb>=0.4.0,<0.4.17",
+    "numpy<2.0.0",
+    "onnxruntime<1.24.0",
+    "posthog<3.0.0",
+    "websockets<17.0",
+]
+secrets = [
+    "boto3>=1.34.0",
+    "hvac>=2.1.0",
+    "google-cloud-secret-manager>=2.20.0",
+]
+observability = [
+    "sentry-sdk>=2.0.0",
+    "structlog>=24.0.0",
+    "python-json-logger>=2.0.0",
+]
+all = [
+    "boto3>=1.34.0",
+    "hvac>=2.1.0",
+    "google-cloud-secret-manager>=2.20.0",
+    "sentry-sdk>=2.0.0",
+    "structlog>=24.0.0",
+    "python-json-logger>=2.0.0",
+]
+
+[project.scripts]
+ultron-v6 = "ultron.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/nyadaryt5/Hacks"
+Repository = "https://github.com/nyadaryt5/Hacks"
+
+[tool.setuptools]
+package-dir = {"" = "ultron-v6"}
+py-modules = ["ultron_v6"]
+
+[tool.setuptools.dynamic]
+version = {attr = "ultron.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["ultron-v6"]
+include = ["ultron", "ultron.*"]
+
+[tool.setuptools.package-data]
+ultron = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Network-dependent tests must opt in explicitly; the default suite is offline.
@@ -41,4 +135,3 @@ ignore = ["E501", "E203", "B904"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
-skips = ["B101"]

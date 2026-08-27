@@ -59,29 +59,59 @@ def test_load_settings_succeeds_with_key(monkeypatch):
     assert settings.target == "example.com"
 
 
+def test_load_settings_reports_secret_backend_failure(monkeypatch):
+    monkeypatch.setenv("ULTRON_SECRETS_BACKEND", "invalid")
+    with pytest.raises(ConfigurationError, match="Secret resolution failed"):
+        load_settings()
+
+
 def test_env_example_documents_required_keys():
-    """The committed .env.example must list the documented variables."""
+    """Root/package templates stay identical and enumerate every setting."""
     from pathlib import Path
 
-    example = Path("ultron-v6/.env.example").read_text(encoding="utf-8")
-    for name in (
+    package_example = Path("ultron-v6/.env.example").read_text(encoding="utf-8")
+    root_example = Path(".env.example").read_text(encoding="utf-8")
+    assert root_example == package_example
+
+    names = {
+        line.lstrip("# ").split("=", maxsplit=1)[0]
+        for line in package_example.splitlines()
+        if "=" in line and line.lstrip("# ").split("=", maxsplit=1)[0]
+    }
+    documented = {
         "GOOGLE_API_KEY",
+        *(f"GOOGLE_API_KEY_{index}" for index in range(1, 11)),
         "ULTRON_MODEL",
+        "ULTRON_BASE_URL",
+        "ULTRON_MAX_RPM_PER_KEY",
+        "ULTRON_MAX_RPD_PER_KEY",
+        "ULTRON_TEMPERATURE",
+        "ULTRON_MAX_TOKENS",
+        "ULTRON_TIMEOUT_SECONDS",
         "ULTRON_MAX_ITERATIONS",
         "ULTRON_MAX_LATERAL_DEPTH",
         "ULTRON_OUTPUT_MAX_CHARS",
         "ULTRON_CACHE_TTL_HOURS",
         "ULTRON_LOG_LEVEL",
+        "ULTRON_JSON_LOGS",
+        "ULTRON_SENTRY_DSN",
         "ULTRON_BUDGET_MAX_TOKENS_PER_SESSION",
         "ULTRON_BUDGET_MAX_TOKENS_PER_MINUTE",
         "ULTRON_BUDGET_MAX_TOKENS_PER_HOUR",
         "ULTRON_BUDGET_MAX_COST_PER_SESSION_USD",
         "ULTRON_BUDGET_WARN_AT_PERCENT",
         "ULTRON_DB_URL",
+        "ULTRON_DB_ECHO",
+        "ULTRON_DB_POOL_SIZE",
         "ULTRON_SECRETS_BACKEND",
-        "ULTRON_SENTRY_DSN",
-    ):
-        assert name in example, name
+        "ULTRON_AWS_SECRET_ID",
+        "ULTRON_AWS_REGION",
+        "ULTRON_VAULT_ADDR",
+        "ULTRON_VAULT_TOKEN",
+        "ULTRON_VAULT_SECRET_PATH",
+        "ULTRON_GCP_SECRET_NAME",
+    }
+    assert documented <= names
 
 
 def test_load_settings_raises_without_key(caplog):

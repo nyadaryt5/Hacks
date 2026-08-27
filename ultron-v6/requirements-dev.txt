@@ -1,9 +1,2 @@
--r requirements.txt
-pytest>=7.0
-pytest-cov>=4.0
-flake8>=6.0
-mypy>=1.0
-ruff>=0.4
-bandit>=1.7
-pip-audit>=2.6
-pip-tools>=7.0
+# Compatibility wrapper; exact runtime + development pins live in requirements-dev.lock.
+-r requirements-dev.lock

@@ -1,5 +1,7 @@
 """Tests for ultron.memory — hash-backend vector memory."""
 
+import builtins
+
 import pytest
 
 from ultron.db import DatabaseManager
@@ -18,6 +20,22 @@ def test_unknown_backend_is_rejected(tmp_path):
     db = DatabaseManager(f"sqlite:///{tmp_path / 'x.db'}")
     with pytest.raises(ValueError, match="Unknown backend"):
         VectorMemory(db, backend="nope")
+    db.close()
+
+
+def test_auto_backend_falls_back_but_explicit_chroma_fails(monkeypatch, tmp_path):
+    real_import = builtins.__import__
+
+    def without_chroma(name, *args, **kwargs):
+        if name == "chromadb":
+            raise ImportError("simulated missing optional dependency")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_chroma)
+    db = DatabaseManager(f"sqlite:///{tmp_path / 'fallback.db'}")
+    assert VectorMemory(db, backend="auto")._use_chromadb is False
+    with pytest.raises(RuntimeError, match="Chroma initialization failed"):
+        VectorMemory(db, backend="chroma")
     db.close()
 
 
@@ -108,6 +126,36 @@ def test_lessons_are_persisted_to_db(memory):
             "SELECT action FROM lesson_memory WHERE session_id=?", ("sess-1",)
         )
         assert cursor.fetchone()[0] == "a"
+
+
+def test_chroma_calls_use_local_embeddings_without_model_download(memory):
+    class FakeCollection:
+        def __init__(self):
+            self.added = None
+            self.queried = None
+
+        def add(self, **kwargs):
+            self.added = kwargs
+
+        def query(self, **kwargs):
+            self.queried = kwargs
+            return {
+                "documents": [["s a o"]],
+                "metadatas": [[{"action": "a"}]],
+                "distances": [[0.25]],
+            }
+
+    collection = FakeCollection()
+    memory._use_chromadb = True
+    memory._chroma_collection = collection
+    memory.store_lesson("s", "a", "o", True, "session")
+
+    assert collection.added["embeddings"]
+    assert "embedding_function" not in collection.added
+    results = memory.query_similar("query", top_k=1)
+    assert collection.queried["query_embeddings"]
+    assert "query_texts" not in collection.queried
+    assert results[0]["similarity"] == pytest.approx(0.75)
 
 
 def test_query_empty_memory_returns_no_results(memory):

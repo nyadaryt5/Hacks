@@ -218,7 +218,10 @@ trusted zone is the operator's authorized scope, denylists and budgets.
 | **Destructive command execution** (`rm -rf /`, reverse shells) | `FORBIDDEN_PATTERNS`, `shell=False`, debate protocol veto for `safety_level=destructive` |
 | **API key leakage / wallet drain** | Keys from AWS Secrets Manager / Vault / GCP (`ultron/secrets.py`); never logged; `BudgetGovernor` + `ULTRON_MAX_ITERATIONS` |
 
-Trust boundaries and reporting process: [SECURITY.md](../SECURITY.md).
+The complete assets, assumptions, data-flow boundaries, fail-closed secret
+policy, residual risks, and verification map are in
+[THREAT_MODEL.md](../THREAT_MODEL.md). Vulnerability reporting and supported
+versions are in [SECURITY.md](../SECURITY.md).
 
 ## 8. Observability
 

@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from ultron.secrets import resolve_google_api_key
+from ultron.secrets import SecretResolutionError, resolve_google_api_key
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +23,15 @@ GEMINI_BASE_URL = (
 
 class ConfigurationError(Exception):
     """Raised when runtime configuration is missing or invalid."""
+
+
+def _resolve_configured_secret() -> None:
+    """Resolve managed credentials and translate failures for CLI callers."""
+    try:
+        resolve_google_api_key()
+    except SecretResolutionError as exc:
+        _LOGGER.critical("Secret resolution failed: %s", exc)
+        raise ConfigurationError(f"Secret resolution failed: {exc}") from exc
 
 
 try:  # pragma: no cover - exercised via both paths in tests
@@ -132,7 +141,7 @@ if HAS_PYDANTIC:
         """
         overrides = overrides or {}
         try:
-            resolve_google_api_key()
+            _resolve_configured_secret()
             settings = ULTRONSettings(**overrides)
             settings.google_ai.load_keys_from_env()
             if not settings.google_ai.api_keys:
@@ -213,7 +222,7 @@ else:
     def load_settings(overrides: dict[str, Any] | None = None) -> ULTRONSettings:
         """Manual configuration fallback (no Pydantic installed)."""
         overrides = overrides or {}
-        resolve_google_api_key()
+        _resolve_configured_secret()
         settings = ULTRONSettings(**overrides)
         settings.google_ai.load_keys_from_env()
         if not settings.google_ai.api_keys:

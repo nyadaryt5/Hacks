@@ -15,9 +15,13 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import os
 import shlex
 import string
-import subprocess  # nosec B404 (pentest tool executes tools by design)
+
+# Command execution is an intentional framework boundary. Every command is
+# scope/denylist checked before this module invokes it with shell=False.
+import subprocess  # nosec B404
 import tempfile
 import uuid
 from datetime import datetime
@@ -47,6 +51,30 @@ if TYPE_CHECKING:  # pragma: no cover
 _LOGGER = logging.getLogger(__name__)
 
 _BANNER = "=" * 60
+
+# Child tools are untrusted relative to the coordinator process. Do not leak
+# model, cloud, Vault, or telemetry credentials through inherited env vars.
+_SENSITIVE_TOOL_ENV = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "ULTRON_SENTRY_DSN",
+    "ULTRON_VAULT_TOKEN",
+    "VAULT_TOKEN",
+}
+
+
+def _tool_environment() -> dict[str, str]:
+    """Return a subprocess environment with coordinator secrets removed."""
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name not in _SENSITIVE_TOOL_ENV
+        and name != "GOOGLE_API_KEY"
+        and not name.startswith("GOOGLE_API_KEY_")
+    }
 
 
 def _phase_header(name: str) -> str:
@@ -481,12 +509,15 @@ class ULTRONCoordinator:
             attributes={"command": cmd[:100]},
         )
         try:
-            result = subprocess.run(  # nosec B603 (jail-filtered, shell=False)
+            # SafetyJail filtered this command at the caller; shell expansion
+            # remains disabled here. B603 is therefore explicitly accepted.
+            result = subprocess.run(  # nosec B603
                 shlex.split(cmd),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 cwd=tempfile.gettempdir(),
+                env=_tool_environment(),
                 check=False,
                 shell=False,
             )

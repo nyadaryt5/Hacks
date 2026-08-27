@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 from ultron import __version__
@@ -12,7 +13,6 @@ from ultron.config import ConfigurationError, load_settings
 from ultron.coordinator import _BANNER, ULTRONCoordinator
 from ultron.errors import init_error_tracking
 from ultron.logging_setup import configure_logging
-from ultron.secrets import resolve_google_api_key
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,16 +64,28 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_common_flags(parser: argparse.ArgumentParser) -> None:
+    levels = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+    env_level = os.getenv("ULTRON_LOG_LEVEL", "INFO").strip().upper()
+    if env_level not in levels:
+        env_level = "INFO"
+    json_default = os.getenv("ULTRON_JSON_LOGS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
     parser.add_argument(
         "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging verbosity (default: INFO)",
+        default=env_level,
+        choices=levels,
+        help="Logging verbosity (default: ULTRON_LOG_LEVEL or INFO)",
     )
     parser.add_argument(
         "--json-logs",
-        action="store_true",
-        help="Emit structured JSON log records",
+        action=argparse.BooleanOptionalAction,
+        default=json_default,
+        help="Emit structured JSON logs (default: ULTRON_JSON_LOGS or false)",
     )
 
 
@@ -100,7 +112,6 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_logging(level=args.log_level, json_format=args.json_logs)
     init_error_tracking()
-    resolve_google_api_key()
 
     if args.command == "serve":
         serve_forever(host=args.host, port=args.port)

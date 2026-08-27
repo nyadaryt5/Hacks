@@ -214,6 +214,30 @@ def test_execute_tool_truncates_long_output(settings, tmp_path, monkeypatch):
     assert len(output) < 4200
 
 
+def test_execute_tool_does_not_inherit_operator_secrets(
+    settings, tmp_path, monkeypatch
+):
+    coord = make_coordinator(settings, tmp_path, monkeypatch, [])
+    monkeypatch.setenv("GOOGLE_API_KEY", "model-secret")
+    monkeypatch.setenv("GOOGLE_API_KEY_2", "rotated-secret")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "cloud-secret")
+    monkeypatch.setenv("ULTRON_VAULT_TOKEN", "vault-secret")
+    monkeypatch.setenv("SAFE_TOOL_SETTING", "preserved")
+    received = {}
+
+    def fake_run(*args, **kwargs):
+        received.update(kwargs["env"])
+        return type("R", (), {"stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr("ultron.coordinator.subprocess.run", fake_run)
+    assert "ok" in coord._execute_tool("echo hi")
+    assert "GOOGLE_API_KEY" not in received
+    assert "GOOGLE_API_KEY_2" not in received
+    assert "AWS_SECRET_ACCESS_KEY" not in received
+    assert "ULTRON_VAULT_TOKEN" not in received
+    assert received["SAFE_TOOL_SETTING"] == "preserved"
+
+
 class TestAgentLoop:
     """Behavior of the bounded plan/authorize/execute/verify loop."""
 
