@@ -75,6 +75,18 @@ def test_json_logs_flag_is_accepted(monkeypatch, capsys):
     assert main(["example.com", "--json-logs"]) == 0
 
 
+def test_logging_defaults_can_come_from_environment(monkeypatch):
+    monkeypatch.setenv("ULTRON_LOG_LEVEL", "warning")
+    monkeypatch.setenv("ULTRON_JSON_LOGS", "true")
+
+    args = build_parser().parse_args(["serve"])
+    assert args.log_level == "WARNING"
+    assert args.json_logs is True
+
+    args = build_parser().parse_args(["serve", "--no-json-logs"])
+    assert args.json_logs is False
+
+
 def test_invalid_log_level_is_rejected():
     with pytest.raises(SystemExit) as excinfo:
         main(["example.com", "--log-level", "LOUD"])
@@ -89,6 +101,9 @@ def test_serve_command_starts_metrics_server(monkeypatch):
         calls["port"] = port
 
     monkeypatch.setattr("ultron.cli.serve_forever", fake_serve_forever)
+    # The liveness server stays offline-capable and must not contact a secret
+    # manager merely because deployment variables are present.
+    monkeypatch.setenv("ULTRON_SECRETS_BACKEND", "invalid")
     assert main(["serve", "--host", "127.0.0.1", "--port", "9000"]) == 0
     assert calls == {"host": "127.0.0.1", "port": 9000}
 

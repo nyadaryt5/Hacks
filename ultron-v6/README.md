@@ -7,16 +7,19 @@ This directory contains the installable **ultron-v6** package.
 
 ## Install
 
+From the repository root:
+
 ```bash
-# Install the committed, reproducible dependency sets first.
-python -m pip install -r requirements.lock
-python -m pip install -r requirements-dev.lock
-python -m pip install --no-deps -e .
+# Install the committed, hash-pinned dependency sets first.
+python -m pip install -r ultron-v6/requirements-build.lock
+python -m pip install -r ultron-v6/requirements.lock
+python -m pip install -r ultron-v6/requirements-dev.lock
+python -m pip install --no-build-isolation --no-deps -e .
 ```
 
 The runtime and development lockfiles are intentionally separate. The dev
-lockfile constrains development tools against `requirements.lock`; installing
-both before the editable package install keeps a fresh clone reproducible.
+lock includes the runtime plus development tools; installing the committed
+pins before the editable package keeps a fresh clone reproducible.
 
 ## Run
 
@@ -52,17 +55,31 @@ ultron/
 
 | File | Purpose |
 |------|---------|
-| `requirements.in` / `requirements.lock` | runtime deps + pinned lockfile |
-| `requirements-dev.in` / `requirements-dev.lock` | dev tooling + pinned lockfile |
-| `requirements-chroma.in` / `requirements-chroma.lock` | optional ChromaDB backend |
+| `../pyproject.toml` | single source of packaging and direct dependencies |
+| `requirements-build.lock` | PEP 517 build backend/tooling, fully pinned |
+| `requirements.lock` | core runtime, fully pinned |
+| `requirements-dev.lock` | core runtime + test/lint/type/security tooling |
+| `requirements-chroma.lock` | core + constrained Chroma (Python 3.10/3.11) |
+| `requirements-all.lock` | cross-version secret-manager + observability integrations |
 
-Regenerate lockfiles with:
+The same locks are committed as regular files at repository root for tooling
+that scans only the top-level project. `scripts/lockfiles.py` keeps both
+locations byte-identical. Lock resolution deliberately uses Python 3.11 as a
+fixed environment-marker baseline. From the repository root with Python 3.11:
 
 ```bash
-pip-compile --output-file requirements.lock requirements.in
-pip-compile --output-file requirements-dev.lock requirements-dev.in
-pip-compile --output-file requirements-chroma.lock requirements-chroma.in
+make lockfiles          # preserve compatible existing pins
+make lockfile-upgrade   # intentionally resolve newest compatible versions
+make lockfile-check     # fail on pyproject drift or mismatched mirrors
 ```
+
+The Chroma upper bound is intentional: releases 0.4.17 and newer remain in
+unpatched CVE-2026-45829, CVE-2026-45830, CVE-2026-45831, and CVE-2026-45833
+ranges. Chroma 0.4.16's native extension does not publish Python 3.12 wheels,
+so Python 3.12 uses the built-in hash-memory backend. ULTRON supplies local
+embeddings and disables Chroma telemetry, so this path does not download an
+embedding model at runtime. CI audits all locks and runs an offline Chroma
+round trip on Python 3.10/3.11.
 
 ## License
 

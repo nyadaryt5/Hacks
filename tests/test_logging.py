@@ -54,6 +54,20 @@ def test_json_formatter_emits_parseable_json():
     assert "timestamp" in payload
 
 
+def test_configure_logging_json_mode_emits_one_parseable_object(capsys):
+    """Exercise the real --json-logs formatter selection path."""
+    configure_logging(level="INFO", json_format=True)
+    logging.getLogger("ultron.smoke").warning("structured-smoke")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    line = capsys.readouterr().out.strip().splitlines()[-1]
+    payload = json.loads(line)
+    assert payload["message"] == "structured-smoke"
+    assert payload.get("level", payload.get("levelname")) == "WARNING"
+    assert payload.get("logger", payload.get("name")) == "ultron.smoke"
+
+
 def test_json_formatter_merges_structured_extra():
     formatter = JsonFormatter()
     record = logging.LogRecord(

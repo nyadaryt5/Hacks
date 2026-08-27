@@ -67,19 +67,34 @@ def test_aws_secrets_manager_plain_string():
     assert fetch_from_aws_secrets_manager("id", client=client) == "AIza-plain"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"GOOGLE_API_KEY":',  # malformed structured payload
+        '["AIza-not-an-object"]',
+        '{"GOOGLE_API_KEY": 123}',
+        '{"unrelated": "value"}',
+    ],
+)
+def test_aws_rejects_malformed_or_unexpected_payloads(payload):
+    assert fetch_from_aws_secrets_manager("id", client=_FakeAWS(payload)) is None
+
+
 def test_aws_missing_id_is_none(monkeypatch):
     monkeypatch.delenv("ULTRON_AWS_SECRET_ID", raising=False)
     assert fetch_from_aws_secrets_manager() is None
 
 
-def test_aws_client_error():
+def test_aws_client_error_is_wrapped():
     class Boom:
         def get_secret_value(self, SecretId: str) -> dict:
             raise RuntimeError("denied")
 
-    # RuntimeError is not BotoCoreError; wrap via generic path
-    with pytest.raises((SecretResolutionError, RuntimeError)):
+    with pytest.raises(
+        SecretResolutionError, match="get_secret_value failed"
+    ) as caught:
         fetch_from_aws_secrets_manager("id", client=Boom())
+    assert "denied" not in str(caught.value)
 
 
 def test_vault_kv2():
@@ -123,3 +138,48 @@ def test_resolve_aws_injects_env(monkeypatch):
     key = resolve_google_api_key(inject=True)
     assert key == "AIza-injected"
     assert secrets_mod.os.environ["GOOGLE_API_KEY"] == "AIza-injected"
+
+
+def test_manager_value_replaces_stale_environment_key(monkeypatch):
+    """A selected manager is authoritative, even when env contains a key."""
+    from ultron import secrets as secrets_mod
+
+    monkeypatch.setenv("ULTRON_SECRETS_BACKEND", "aws")
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-stale")
+    monkeypatch.setattr(
+        secrets_mod,
+        "fetch_from_aws_secrets_manager",
+        lambda: "AIza-managed",
+    )
+
+    assert resolve_google_api_key() == "AIza-managed"
+    assert secrets_mod.os.environ["GOOGLE_API_KEY"] == "AIza-managed"
+
+
+def test_manager_failure_does_not_fall_back_to_environment(monkeypatch):
+    """Explicit manager selection must fail closed, not use stale env state."""
+    from ultron import secrets as secrets_mod
+
+    monkeypatch.setenv("ULTRON_SECRETS_BACKEND", "vault")
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-stale")
+    monkeypatch.setattr(secrets_mod, "fetch_from_vault", lambda: None)
+
+    with pytest.raises(SecretResolutionError, match="fallback is disabled"):
+        resolve_google_api_key()
+    assert secrets_mod.os.environ["GOOGLE_API_KEY"] == "AIza-stale"
+
+
+def test_unknown_backend_fails_closed(monkeypatch):
+    monkeypatch.setenv("ULTRON_SECRETS_BACKEND", "typo")
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-would-hide-the-typo")
+
+    with pytest.raises(SecretResolutionError, match="Unsupported"):
+        resolve_google_api_key()
+
+
+def test_missing_backend_sdk_is_an_error(monkeypatch):
+    from ultron import secrets as secrets_mod
+
+    monkeypatch.setattr(secrets_mod, "boto3", None)
+    with pytest.raises(SecretResolutionError, match="boto3 is not installed"):
+        fetch_from_aws_secrets_manager("ultron/key")

@@ -16,7 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 try:  # pragma: no cover - optional dependency
     import sentry_sdk
 except ImportError:  # pragma: no cover
-    sentry_sdk = None  # type: ignore[assignment]
+    sentry_sdk = None
 
 _STATE = {"initialized": False}
 

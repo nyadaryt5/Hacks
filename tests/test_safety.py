@@ -14,6 +14,7 @@ def jail():
         allowed_networks=[
             ipaddress.ip_network("10.0.0.0/8"),
             ipaddress.ip_network("192.168.1.10/32"),
+            ipaddress.ip_network("2001:db8::/32"),
         ],
     )
 
@@ -133,5 +134,25 @@ class TestHostScopeChecks:
         assert ok is False
         assert "scan.host.example.net out of scope" in reason
 
+    def test_two_label_fqdn_cannot_bypass_scope_check(self, jail):
+        ok, reason = jail.filter_command("nmap attacker.net")
+        assert ok is False
+        assert "attacker.net out of scope" in reason
+
     def test_in_scope_subdomain_fqdn_passes(self, jail):
         assert jail.filter_command("nmap -sV deep.example.com")[0] is True
+
+    def test_in_scope_two_label_fqdn_passes(self, jail):
+        assert jail.filter_command("nmap -sV example.com")[0] is True
+
+    def test_ipv6_literals_are_scope_checked(self, jail):
+        assert jail.filter_command("nmap -6 2001:db8::42")[0] is True
+        ok, reason = jail.filter_command("nmap -6 2001:4860:4860::8888")
+        assert ok is False
+        assert "2001:4860:4860::8888 out of scope" in reason
+
+    def test_bracketed_ipv6_url_is_scope_checked(self, jail):
+        assert jail.filter_command("curl http://[2001:db8::42]/health")[0] is True
+        ok, reason = jail.filter_command("curl http://[2606:4700:4700::1111]/")
+        assert ok is False
+        assert "2606:4700:4700::1111 out of scope" in reason

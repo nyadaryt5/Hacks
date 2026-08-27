@@ -1,9 +1,0 @@
--c requirements.lock
-pytest>=7.0
-pytest-cov>=4.0
-flake8>=6.0
-mypy>=1.0
-ruff>=0.4
-bandit>=1.7
-pip-audit>=2.6
-pip-tools>=7.0

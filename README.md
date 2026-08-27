@@ -3,7 +3,7 @@
 [![CI](https://github.com/nyadaryt5/Hacks/actions/workflows/ci.yml/badge.svg)](https://github.com/nyadaryt5/Hacks/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](ultron-v6/LICENSE)
-[![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen.svg)](https://github.com/nyadaryt5/Hacks/actions)
+[![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen.svg)](https://github.com/nyadaryt5/Hacks/actions)
 
 **ULTRON v6** is a production-grade autonomous penetration testing framework
 powered by Google AI (Gemini). It orchestrates LLM-driven security analysis
@@ -137,12 +137,13 @@ Requirements: Python 3.10+.
 git clone https://github.com/nyadaryt5/Hacks.git
 cd Hacks
 
-# 2. Create a virtualenv and install the pinned runtime and dev dependencies
+# 2. Create a virtualenv and install the hash-pinned build/runtime/dev sets
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -r ultron-v6/requirements-build.lock
 python -m pip install -r ultron-v6/requirements.lock
 python -m pip install -r ultron-v6/requirements-dev.lock
-python -m pip install --no-deps -e ./ultron-v6
+python -m pip install --no-build-isolation --no-deps -e .
 
 # 3. Configure your Google AI API key (see Configuration below)
 cp ultron-v6/.env.example .env
@@ -153,18 +154,28 @@ ultron-v6 --version
 python -m ultron_v6 --help
 ```
 
-Optional ChromaDB backend:
+Optional production integrations:
 
 ```bash
-# The optional backend has its own committed lockfile.
+# ChromaDB plus the core runtime on Python 3.10/3.11. Chroma is constrained
+# to the last release outside the unpatched 2026 advisory ranges; Python 3.12
+# uses ULTRON's built-in hash-memory backend instead. ULTRON provides local
+# embeddings and disables Chroma telemetry; no model download is required.
 python -m pip install -r ultron-v6/requirements-chroma.lock
+
+# Cross-version production integrations: AWS/Vault/GCP secrets + observability.
+python -m pip install -r ultron-v6/requirements-all.lock
 ```
 
-The commands above intentionally install the committed lockfiles first and
-then install the local package with `--no-deps`. This prevents the editable
-install from silently resolving newer dependency versions. Regenerate the
-lockfiles only when intentionally updating dependencies (see
-`ultron-v6/README.md`).
+The commands above intentionally install committed lockfiles first and then
+install the local package with `--no-deps`. This prevents an editable install
+from silently resolving newer versions. Root `pyproject.toml` is the single
+packaging and dependency manifest; `make lockfiles` regenerates every exact,
+artifact-hashed package lock and its regular root-level mirror, while
+`make lockfile-check` fails on manifest drift or mismatched mirrors. Run lock
+commands with Python 3.11 (the fixed marker-resolution baseline); the resulting
+locks install on the supported versions documented above. See
+`ultron-v6/README.md` for details.
 
 ## Configuration
 
@@ -174,29 +185,40 @@ and export the values (or use a `.env` loader of your choice).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOOGLE_API_KEY` | — | Primary Gemini API key (**required**) |
-| `GOOGLE_API_KEY_1..10` | — | Additional keys, rotated per request |
+| `GOOGLE_API_KEY` | — | Primary Gemini API key (**required for scans**) |
+| `GOOGLE_API_KEY_1` … `GOOGLE_API_KEY_10` | — | Additional keys, rotated per request |
 | `ULTRON_MODEL` | `gemini-1.5-flash` | Gemini model |
+| `ULTRON_BASE_URL` | Google Gemini endpoint | OpenAI-compatible API endpoint |
+| `ULTRON_MAX_RPM_PER_KEY` / `ULTRON_MAX_RPD_PER_KEY` | `14` / `1400` | Per-key request limits |
+| `ULTRON_TEMPERATURE` / `ULTRON_MAX_TOKENS` | `0.3` / `3000` | Model generation controls |
+| `ULTRON_TIMEOUT_SECONDS` | `120` | LLM request timeout (5–300 seconds) |
 | `ULTRON_MAX_ITERATIONS` | `30` | Max FSM cycles |
 | `ULTRON_MAX_LATERAL_DEPTH` | `2` | Max lateral-movement depth |
 | `ULTRON_OUTPUT_MAX_CHARS` | `4000` | Max tool output kept (500–10000) |
 | `ULTRON_CACHE_TTL_HOURS` | `24` | Memory cache TTL |
 | `ULTRON_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` |
+| `ULTRON_JSON_LOGS` | `false` | Structured JSON output; CLI flags override it |
+| `ULTRON_PORT` | `8080` | Host port published by Docker Compose |
+| `ULTRON_SENTRY_DSN` | — | Optional Sentry DSN; unset means no error export |
 | `ULTRON_BUDGET_MAX_TOKENS_PER_SESSION` | `500000` | Session token budget |
 | `ULTRON_BUDGET_MAX_TOKENS_PER_MINUTE` | `10000` | Per-minute token budget |
 | `ULTRON_BUDGET_MAX_TOKENS_PER_HOUR` | `100000` | Per-hour token budget |
 | `ULTRON_BUDGET_MAX_COST_PER_SESSION_USD` | `1.0` | Session cost cap |
 | `ULTRON_BUDGET_WARN_AT_PERCENT` | `80.0` | Warning threshold (%) |
 | `ULTRON_DB_URL` | `sqlite:///ultron_v6.db` | SQLAlchemy database URL |
+| `ULTRON_DB_ECHO` / `ULTRON_DB_POOL_SIZE` | `false` / `5` | SQL logging and pool size |
 | `ULTRON_SECRETS_BACKEND` | `env` | `env`, `aws`, `vault`, or `gcp` secret source |
-| `ULTRON_AWS_SECRET_ID` | — | AWS Secrets Manager secret id (backend=`aws`) |
-| `ULTRON_VAULT_ADDR` / `ULTRON_VAULT_TOKEN` / `ULTRON_VAULT_SECRET_PATH` | — | HashiCorp Vault KV v2 (backend=`vault`) |
+| `ULTRON_AWS_SECRET_ID` / `ULTRON_AWS_REGION` | — | AWS secret id/ARN and optional region |
+| `ULTRON_VAULT_ADDR` / `ULTRON_VAULT_TOKEN` / `ULTRON_VAULT_SECRET_PATH` | — | HashiCorp Vault KV v2 settings |
 | `ULTRON_GCP_SECRET_NAME` | — | GCP Secret Manager resource name |
-| `ULTRON_SENTRY_DSN` | — | Optional Sentry DSN; unset = no-op error tracking |
-| `ULTRON_JSON_LOGS` | — | Prefer `--json-logs`; structured via structlog / python-json-logger |
 
 Configuration is validated at startup by pydantic; missing keys or invalid
-values fail fast with a clear error (exit code 1).
+values fail fast with a clear error (exit code 1). Secret managers are also
+**fail-closed**: after `aws`, `vault`, or `gcp` is selected, a missing SDK,
+invalid manager configuration, provider error, or empty payload aborts startup.
+ULTRON never masks that failure by using an environment key. Manager values
+replace stale `GOOGLE_API_KEY` process state, and coordinator credentials are
+removed from the environment inherited by executed tools.
 
 ## Usage
 
@@ -236,14 +258,15 @@ accounts. Install dependencies using the pinned commands in the installation
 section, then run:
 
 ```bash
-pytest                                      # full offline suite (250 tests)
-pytest --cov=ultron --cov-report=term-missing --cov-fail-under=85
+pytest tests                                # full offline suite
+pytest tests --cov=ultron --cov-report=term-missing --cov-fail-under=85
 flake8 ultron-v6/ultron ultron-v6/ultron_v6.py tests
 mypy ultron-v6/ultron ultron-v6/ultron_v6.py
 ruff check ultron-v6/ultron
 bandit -r ultron-v6/ultron -c pyproject.toml
-pip-audit --requirement ultron-v6/requirements.lock
-make lockfile-check                             # pip-compile --dry-run vs committed locks
+pip-audit --strict -r ultron-v6/requirements.lock
+pip-audit --strict -r ultron-v6/requirements-all.lock
+make lockfile-check                         # resolve + byte-compare every lock
 ```
 
 Tests use `httpx.MockTransport` for LLM requests and a local/hash-backed
@@ -253,13 +276,19 @@ with `pytest -m network` when the required service is available.
 
 CI runs the same gates on every push and pull request
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) across Python 3.10,
-3.11 and 3.12. The workflow also builds the wheel and source distribution.
+3.11 and 3.12. Separate jobs install cross-version integrations on 3.10/3.12
+and the constrained Chroma set on 3.10/3.11. The workflow also builds the
+wheel/source distribution plus downloadable CycloneDX SBOMs.
 
 ## Project layout
 
 ```text
 .
 ├── .github/workflows/ci.yml        # lint + typecheck + tests + security
+├── pyproject.toml                  # PEP 621 package + dependency source
+├── .env.example                    # root-visible config template mirror
+├── requirements*.lock              # root-visible regular lockfile mirrors
+├── scripts/lockfiles.py             # deterministic generation/drift check
 ├── docs/architecture.md            # design documentation
 ├── tests/                          # pytest suite (repo root)
 └── ultron-v6/
@@ -282,9 +311,8 @@ CI runs the same gates on every push and pull request
     │   ├── api.py                  # health/metrics server
     │   └── cli.py                  # command line interface
     ├── ultron_v6.py                # backwards-compatible entry module
-    ├── pyproject.toml              # PEP 621 packaging + dependencies
-    ├── requirements*.txt/.lock     # manifests + pinned lockfiles
-    ├── .env.example                # environment variable reference
+    ├── requirements*.lock          # pyproject-derived pinned dependency sets
+    ├── .env.example                # package-local config template mirror
     └── LICENSE
 ```
 
@@ -310,11 +338,12 @@ infrastructure.** Unauthorized scanning is illegal in most jurisdictions.
 
 ### Secret management
 
-`GOOGLE_API_KEY` is read from the environment. For local use a `.env` file is
-fine, but in any **deployed or shared context** source the key from a secret
-manager — AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault, or GitHub
-Actions secrets — rather than a plain, long-lived `.env` file. Never commit
-real keys.
+Environment keys are supported for local use. In any **deployed or shared
+context**, set `ULTRON_SECRETS_BACKEND` so the key is resolved directly from
+AWS Secrets Manager, GCP Secret Manager, or HashiCorp Vault rather than a
+plain, long-lived `.env` file. Manager mode fails closed and never silently
+falls back to env credentials. Real `.env` files are excluded from Git and the
+Docker build context; never commit a key.
 
 A full threat model (prompt-injection, jail-bypass, key-exposure and
 out-of-scope-targeting risks, each with a mitigation reference) is documented
